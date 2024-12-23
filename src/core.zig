@@ -18,7 +18,7 @@ var rng = rand.Xoshiro256.init(0);
 //  I.e., the region B := { b in R^2 | d(centre, b) < radius }
 pub const Ball2f = struct {
     centre: Vec2f,
-    radius: f32,
+    radius: f32 = 0,
     const Self = @This();
 
     pub fn overlapsBall(self: Self, b: Ball2f) bool {
@@ -33,7 +33,6 @@ pub const Ball2f = struct {
     }
 
     pub fn overlapsBallsX8(self: Self, balls: [8]Ball2f) [8]bool {
-        // NOTE: actually performs worse than the naive method when compiled with --release=fast
         const dx_vec = Vec8f{
             balls[0].centre[0],
             balls[1].centre[0],
@@ -67,7 +66,8 @@ pub const Ball2f = struct {
             self.radius + balls[7].radius,
         };
 
-        // NOTE: using @sqrt was just as fast as using the inequality shown below
+        // NOTE: Actually performs worse than the naive method when compiled with --release=fast
+        //       Using @sqrt was just as fast as using the inequality shown below
         // return @sqrt(dx_vec * dx_vec + dy_vec * dy_vec) < r_sums_vec;
         return dx_vec * dx_vec + dy_vec * dy_vec < r_sums_vec * r_sums_vec;
     }

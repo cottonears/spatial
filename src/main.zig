@@ -124,7 +124,7 @@ const canvas_scale = 250;
 const palette_size = 8;
 var dashed_styles: [palette_size]svg.ShapeStyle = undefined;
 var solid_styles: [palette_size]svg.ShapeStyle = undefined;
-var test_canvas: svg.SvgCanvas = undefined;
+var test_canvas: svg.Canvas = undefined;
 
 fn init() !void {
     // delete test-out and create a new copy
@@ -137,7 +137,7 @@ fn init() !void {
         "Creating svg canvas ({}x{}) and random palette ({} colours)...\n",
         .{ canvas_width, canvas_height, palette_size },
     );
-    test_canvas = svg.SvgCanvas.init(std.testing.allocator, canvas_width, canvas_height, canvas_scale);
+    test_canvas = svg.Canvas.init(std.testing.allocator, canvas_width, canvas_height, canvas_scale);
     var palette = try svg.RandomHslPalette.init(std.testing.allocator, palette_size);
     for (0.., palette.hsl_colours) |i, hsl| {
         dashed_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl, .stroke_dashed = true };

@@ -10,7 +10,7 @@ const DEFAULT_LT_RANGE = [_]u9{ 40, 60 };
 // - layers with default colouring + styles
 // - automatic scaling and offset to fit contents (would require storing elements in some intermediate representation)
 /// A struct that can be used to compose images from basic shapes. Useful for testing.
-pub const SvgCanvas = struct {
+pub const Canvas = struct {
     height: f32,
     width: f32,
     scale: f32,
@@ -41,7 +41,7 @@ pub const SvgCanvas = struct {
     pub fn addLine(self: *Self, allocator: mem.Allocator, start: Vec2f, end: Vec2f, style: ShapeStyle) !void {
         const start_c = self.getCanvasCoords(start);
         const end_c = self.getCanvasCoords(end);
-        var sbuff: [128]u8 = undefined;
+        var sbuff: [256]u8 = undefined;
         const element_str = try std.fmt.allocPrint(
             allocator,
             "\n<line x1=\"{d:.3}\" y1=\"{d:.3}\" x2=\"{d:.3}\" y2=\"{d:.3}\" {s}/>",
@@ -54,7 +54,7 @@ pub const SvgCanvas = struct {
     pub fn addRectangle(self: *Self, allocator: mem.Allocator, start: Vec2f, end: Vec2f, style: ShapeStyle) !void {
         const start_c = self.getCanvasCoords(start);
         const diff_c = self.getCanvasCoords(end - start);
-        var sbuff: [128]u8 = undefined;
+        var sbuff: [256]u8 = undefined;
         const element_str = try std.fmt.allocPrint(
             allocator,
             "\n<rect x=\"{d:.3}\" y=\"{d:.3}\" width=\"{d:.3}\" height=\"{d:.3}\" {s}/>",
@@ -67,7 +67,7 @@ pub const SvgCanvas = struct {
     pub fn addCircle(self: *Self, allocator: mem.Allocator, centre: Vec2f, radius: f32, style: ShapeStyle) !void {
         const centre_c = self.getCanvasCoords(centre);
         const radius_c = self.scale * radius;
-        var sbuff: [128]u8 = undefined;
+        var sbuff: [256]u8 = undefined;
         const element_str = try std.fmt.allocPrint(
             allocator,
             "\n<circle cx=\"{d:.3}\" cy=\"{d:.3}\" r=\"{d:.3}\" {s}/>",
@@ -87,7 +87,7 @@ pub const SvgCanvas = struct {
             const str = try std.fmt.bufPrint(slice, "{d:.3},{d:.3} ", .{ p_c[0], p_c[1] });
             try pts_list.appendSlice(str);
         }
-        var sbuff: [128]u8 = undefined;
+        var sbuff: [256]u8 = undefined;
         const element_str = try std.fmt.allocPrint(
             allocator,
             "\n<polygon points=\"{s}\" {s}/>",
@@ -139,7 +139,7 @@ pub const ShapeStyle = struct {
     stroke_opacity: f32 = 1.0,
     stroke_dashed: bool = false,
 
-    pub fn getElementString(style: ShapeStyle, buff_ptr: *[128]u8) ![]u8 {
+    pub fn getElementString(style: ShapeStyle, buff_ptr: *[256]u8) ![]u8 {
         var len: usize = 0;
         if (style.fill_active) {
             len = (try std.fmt.bufPrint(
@@ -256,7 +256,7 @@ test "paint" { // creates a canvas and paint it
         [_]f32{ 200, 300 },
         [_]f32{ 100, 150 },
     };
-    var canvas = SvgCanvas.init(testing.allocator, canvas_width, canvas_height, 1.0);
+    var canvas = Canvas.init(testing.allocator, canvas_width, canvas_height, 1.0);
     defer canvas.deinit();
     var pal = try RandomHslPalette.init(std.testing.allocator, 4);
     defer pal.deinit();
