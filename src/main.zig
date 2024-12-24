@@ -34,8 +34,9 @@ pub fn main() !void {
 fn runAllBenchmarks(n: u32) !void {
     genRandomFloats();
     std.debug.print("Running all benchmarks for {} bodies...\n", .{n});
-    benchmarkVectorMaths();
-    // TOOD: add benchmarks
+    //benchmarkVectorMaths();
+    // TOOD: add more benchmarks
+    std.debug.print("Benchmarks complete!");
 }
 
 fn benchmarkUpdateBounds() void {
