@@ -20,6 +20,16 @@ fn getNodesPerLevelArray(comptime base: u8, comptime depth: u8) [depth]u32 {
     return npl;
 }
 
+fn getSizePerLevelArray(comptime base: u8, comptime depth: u8, comptime size: f32) [depth]f32 {
+    var spl: [depth]f32 = undefined;
+    var last_size = size;
+    inline for (0..depth) |d| {
+        spl[d] = last_size / base;
+        last_size = last_size / base;
+    }
+    return spl;
+}
+
 fn getLevelStartIndexes(comptime base: u8, comptime depth: u8) [depth]u32 {
     const npl = getNodesPerLevelArray(base, depth);
     var start_indexes: [depth]u32 = undefined;
@@ -66,31 +76,50 @@ test "pow2n" {
     try testing.expectEqual(64, npl_quad[2]);
     try testing.expectEqual(256, npl_quad[3]);
 
-    var my_qt = try SquareTree(2, 4, Vec2f{ 0, 0 }, 1000).init(testing.allocator);
+    var my_qt = try SquareTree(2, 4, 400).init(testing.allocator, Vec2f{ 0, 0 });
     defer my_qt.deinit();
+    my_qt.printInfo();
 }
 
 // TODO: keep developing the below struct and add to data + compare performance with naive implementation.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 /// There are base * base children on each level.
-pub fn SquareTree(base: u8, depth: u8, origin: Vec2f, size: f32) type {
-    _ = origin;
-    _ = size;
+pub fn SquareTree(base: u8, depth: u8, size: f32) type {
     const nodes_per_level = getNodesPerLevelArray(base, depth);
+    // TODO: check if having size as a comptime parameter actually improves performance
+    //       if it doesn't place it in the struct
+    const size_per_level = getSizePerLevelArray(base, depth, size);
+    const level_start_indexes = getLevelStartIndexes(base, depth);
+    const node_count = level_start_indexes[depth - 1] + nodes_per_level[depth - 1];
 
     return struct {
         allocator: std.mem.Allocator = undefined,
-        //node_bounding_balls: [number_nodes]Ball2f = undefined,
+        node_bounding_balls: [node_count]Ball2f = undefined,
+        origin: Vec2f,
         const Self = @This();
 
-        pub fn init(allocator: std.mem.Allocator) !Self {
-            std.debug.print("init square tree; nodes-per-level: {any}\n", .{nodes_per_level});
-            return Self{ .allocator = allocator };
+        pub fn init(allocator: std.mem.Allocator, origin: Vec2f) !Self {
+            return Self{
+                .allocator = allocator,
+                .origin = origin,
+            };
         }
 
         pub fn deinit(self: *Self) void {
             //self.allocator.free(memory: anytype)
             _ = self;
+        }
+
+        pub fn printInfo(self: Self) void {
+            std.debug.print("SquareTree info:\n", .{});
+            std.debug.print("Node count: {d}\n", .{self.nodeCount()});
+            std.debug.print("Nodes per level: {any}\n", .{nodes_per_level});
+            std.debug.print("Level start indexes: {any}\n", .{level_start_indexes});
+            std.debug.print("Size per level: {any}\n", .{size_per_level});
+        }
+
+        pub fn nodeCount(_: Self) u32 {
+            return node_count;
         }
     };
 }
