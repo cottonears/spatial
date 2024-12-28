@@ -1,6 +1,7 @@
 const std = @import("std");
 const core = @import("core.zig");
 const data = @import("data.zig");
+const square_tree = @import("square_tree.zig");
 const svg = @import("svg.zig");
 const Vec2f = core.Vec2f;
 const Vec3f = core.Vec3f;
@@ -15,14 +16,14 @@ const fmt = std.fmt;
 const fs = std.fs;
 const os = std.os;
 const time = std.time;
-const random_len = 8000;
+const random_len = 5000;
 const num_trials = 10;
 var random_floats: [random_len]f32 = undefined;
 var random_vecs: [random_len]Vec2f = undefined;
 var random_data_generated = false;
 
 pub fn main() !void {
-    var num_bodies: u32 = 10000;
+    var num_bodies: u32 = random_len;
     if (os.argv.len > 1) {
         const slice = std.mem.span(os.argv[1]);
         num_bodies = try fmt.parseInt(u32, slice, 0);
@@ -172,4 +173,25 @@ test "encompassing balls" {
         );
         try test_canvas.writeHtml(testing.allocator, fpath, true);
     }
+}
+
+test "square tree 2x2" {
+    const tree_depth = 3;
+    const qt = square_tree.SquareTree(2, tree_depth, 800).init(testing.allocator, 16, Vec2f{ 0, 0 });
+    for (0..1000) |i| {
+        const test_pt = random_vecs[i % random_vecs.len];
+
+        const index = qt.getIndexVecForPoint(test_pt);
+        const leaf_num = qt.getLeafNodeNumber(index);
+        const leaf_origin = qt.getNodeOrigin(index, tree_depth - 1);
+        const pt_origin_dist = core.norm(test_pt - leaf_origin);
+        try testing.expect(pt_origin_dist <= @sqrt(2.0));
+        try testing.expect(leaf_num < qt.numberNodes());
+    }
+
+    for (0..tree_depth) |lvl| {}
+    // TODO: compose a canvas based on the square tree
+    // try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[0]);
+    // try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[2]);
+    // try test_canvas.addCircle(testing.allocator, c.centre,
 }

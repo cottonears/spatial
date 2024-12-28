@@ -74,7 +74,7 @@ pub const Ball2f = struct {
 };
 
 /// An axis-aligned rectangular region in 2D Euclidean space.
-//  I.e., the region B: = { b in R^2 | centre - 0.5 * w < b[0] < centre + 0.5 * w and centre - 0.5 * h < b[1] < centre + 0.5 * h}
+//  I.e., the region B: = { b in R^2 | (|centre - b[0]| < 0.5 * w) and (|centre - b[1]| < 0.5 * h)}
 pub const Box2f = struct {
     centre: Vec2f,
     width: f32,
