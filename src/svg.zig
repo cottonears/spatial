@@ -19,13 +19,13 @@ pub const Canvas = struct {
     //palette: RandomHslPalette = undefined,
     const Self = @This();
 
-    pub fn init(allocator: mem.Allocator, width: f32, height: f32, scale: f32) Self {
+    pub fn init(allocator: mem.Allocator, width: f32, height: f32, scale: f32) !Self {
         return .{
             .height = height,
             .width = width,
             .scale = scale,
             .offset = Vec2f{ 0.5 * width, 0.5 * height },
-            .str = std.ArrayList(u8).init(allocator),
+            .str = try std.ArrayList(u8).initCapacity(allocator, 10000),
             //.palette = RandomHslPalette.initDefault(),
         };
     }
@@ -61,6 +61,7 @@ pub const Canvas = struct {
             .{ start_c[0], start_c[1], diff_c[0], diff_c[1], try style.getElementString(&sbuff) },
         );
         defer allocator.free(element_str);
+        //std.debug.print("appending rectangle to canvas:\n {s}\n", .{element_str});
         try self.str.appendSlice(element_str);
     }
 
@@ -92,6 +93,23 @@ pub const Canvas = struct {
             allocator,
             "\n<polygon points=\"{s}\" {s}/>",
             .{ pts_list.items[0..], try style.getElementString(&sbuff) },
+        );
+        defer allocator.free(element_str);
+        try self.str.appendSlice(element_str);
+    }
+
+    pub fn addText(self: *Self, allocator: mem.Allocator, centre: Vec2f, text: []const u8, font_size: u8, fill_hsl: [3]u9) !void {
+        const centre_c = self.getCanvasCoords(centre);
+        var sbuff: [128]u8 = undefined;
+        const style_str = try std.fmt.bufPrint(
+            &sbuff,
+            "font-size=\"{d}\" fill=\"hsl({d:.0},{d:.0}%,{d:.0}%)\" text-anchor=\"middle\"",
+            .{ font_size, fill_hsl[0], fill_hsl[1], fill_hsl[2] },
+        );
+        const element_str = try std.fmt.allocPrint(
+            allocator,
+            "\n<text x=\"{d:.3}\" y=\"{d:.3}\" {s}>{s}</text>",
+            .{ centre_c[0], centre_c[1], style_str, text },
         );
         defer allocator.free(element_str);
         try self.str.appendSlice(element_str);
@@ -256,7 +274,7 @@ test "paint" { // creates a canvas and paint it
         [_]f32{ 200, 300 },
         [_]f32{ 100, 150 },
     };
-    var canvas = Canvas.init(testing.allocator, canvas_width, canvas_height, 1.0);
+    var canvas = try Canvas.init(testing.allocator, canvas_width, canvas_height, 1.0);
     defer canvas.deinit();
     var pal = try RandomHslPalette.init(std.testing.allocator, 4);
     defer pal.deinit();
