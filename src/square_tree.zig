@@ -254,10 +254,11 @@ pub fn SquareTree(comptime base_type: type, comptime depth: u8, comptime square_
                     bball = core.getEncompassingBall(bball, self.leaf_lists[i].items[j]);
                 }
                 self.node_bballs[num_parents + i] = bball;
+                self.node_empty[num_parents + i] = false;
             }
             // then iterate through the higher levels of the tree and update their bounding volumes.
             var lvl_index: i16 = depth - 2;
-            while (lvl_index > 0) {
+            while (lvl_index >= 0) {
                 const lvl: u8 = @intCast(lvl_index);
                 const start_num = nodes_above_level[lvl];
                 const end_num = start_num + nodes_in_level[lvl];
@@ -298,7 +299,7 @@ pub fn SquareTree(comptime base_type: type, comptime depth: u8, comptime square_
                 const leaf_index = node_number - num_parents;
                 for (self.leaf_lists[leaf_index].items) |leaf_ball| {
                     if (b.overlapsBall(leaf_ball)) {
-                        buff[buff_index] = leaf_index;
+                        buff[buff_index] = leaf_index; // TODO: figure out what to do about this garbageville situation
                         buff_index += 1;
                     }
                 }
@@ -329,6 +330,13 @@ pub fn SquareTree(comptime base_type: type, comptime depth: u8, comptime square_
     };
 }
 
+// IDEA: Rework indexing so that we just use unsigned integers to identify leaf nodes.
+//       Queries for higher level nodes can be supported by storing node info in a 2D array.
+//       This could make usage more convenient by eliminating slices + arrays - may also improve performance.
+// IDEA: Should we add a custom type for node-number as well? This would allow for more efficient memory (+cache) usage.
+// IDEA: the first implementation updates bounds as soon as things are added, might be good to add a lazy option in future.
+// TODO: check if having grid-size as a comptime parameter actually improves performance
+/// A data structure that covers a square region (size * size) of 2D Euclidean space.
 const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
@@ -445,6 +453,27 @@ test "hex tree indexing" {
     }
 }
 
+test "hex bounds" {
+    const tree_depth = 2;
+    const HexTree2 = SquareTree(u4, tree_depth, 1.0);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
+    defer tree.deinit();
+
+    const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
+    const b = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 };
+    const c = Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 };
+    const index_a = try tree.addBody(a);
+    const index_b = try tree.addBody(b);
+    const index_c = try tree.addBody(c);
+    tree.updateBounds();
+    std.debug.print("index_a = {}; index_b = {}; index_c = {}.\n", .{ index_a, index_b, index_c });
+
+    for (0..HexTree2.num_nodes) |n| {
+        if (tree.node_empty[n]) continue;
+        std.debug.print("Node {d} bball = {any}\n", .{ n, tree.node_bballs[n] });
+    }
+}
+
 test "hex tree overlap" {
     const tree_depth = 2;
     const HexTree2 = SquareTree(u4, tree_depth, 1.0);
@@ -472,11 +501,12 @@ test "hex tree overlap" {
     const overlap_indexes_2 = tree.getOverlappingIndexes(&index_buff, query_region_2);
     try testing.expectEqual(0, overlap_indexes_2.len);
 
-    const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, -0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
+    const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
     const overlap_indexes_3 = tree.getOverlappingIndexes(&index_buff, query_region_3);
     try testing.expectEqual(3, overlap_indexes_3.len);
     std.debug.print("overlap 3 = {any}.\n", .{overlap_indexes_3});
 }
+
 // pub const LeafNode = struct {
 //     node_number: u16,
 //     bodies: std.ArrayList(Ball2f), // IDEA: try using a MultiArrayList here and compare performance

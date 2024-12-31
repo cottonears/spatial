@@ -22,6 +22,7 @@ pub const Ball2f = struct {
     const Self = @This();
 
     pub fn overlapsBall(self: Self, b: Ball2f) bool {
+        if (self.radius == 0 or b.radius == 0) return false;
         return squaredSum(self.centre - b.centre) < (self.radius + b.radius) * (self.radius + b.radius);
     }
 
@@ -177,8 +178,8 @@ pub fn boxesOverlap(a1: Vec2f, a2: Vec2f, b1: Vec2f, b2: Vec2f) bool {
 pub fn getEncompassingBall(a: Ball2f, b: Ball2f) Ball2f {
     const d = a.centre - b.centre;
     const dist = norm(d);
-    if (dist + b.radius < a.radius) return a; // a encompasses b
-    if (dist + a.radius < b.radius) return b; // b encompasses a
+    if (b.radius == 0 or (dist + b.radius < a.radius)) return a; // a encompasses b
+    if (a.radius == 0 or (dist + a.radius < b.radius)) return b; // b encompasses a
     // otherwise, create a new circle that encompasses both a and b
     return .{
         .radius = 0.5 * (dist + a.radius + b.radius),

@@ -17,16 +17,16 @@ const fs = std.fs;
 const os = std.os;
 const time = std.time;
 const random_len = 10000;
-const num_trials = 10;
+var num_trials: u16 = 10;
 var random_floats: [random_len]f32 = undefined;
 var random_vecs: [random_len]Vec2f = undefined;
+var random_balls: [random_len]Ball2f = undefined;
 var random_data_generated = false;
 
 pub fn main() !void {
-    var num_bodies: u32 = random_len;
     if (os.argv.len > 1) {
         const slice = std.mem.span(os.argv[1]);
-        num_bodies = try fmt.parseInt(u32, slice, 0);
+        num_trials = try fmt.parseInt(u16, slice, 0);
     }
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -35,21 +35,51 @@ pub fn main() !void {
         const check = gpa.deinit();
         std.debug.print("gpa deinit check: {}\n", .{check});
     }
-    try runAllBenchmarks(allocator, num_bodies);
+    try runAllBenchmarks(allocator);
 }
 
-fn runAllBenchmarks(allocator: std.mem.Allocator, n: u32) !void {
-    genRandomFloats();
-    std.debug.print("Running all benchmarks for {} bodies...\n", .{n});
+fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
+    genRandomData();
+    std.debug.print("Running all benchmarks for {} bodies...\n", .{random_len});
     //benchmarkVectorMaths();
     // TOOD: add more benchmarks
     try benchmarkSquareTreeIndexing(allocator);
+    try benchmarkOverlap(allocator);
     std.debug.print("Benchmarks complete!\n", .{});
 }
 
-fn benchmarkUpdateBounds() void {
-    // TODO: implement + test this
+fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
+    std.debug.print("Starting square-tree benchmark...", .{});
+    const tree_depth = 2;
+    const HexTree3 = square_tree.SquareTree(u4, tree_depth, 1.0);
+    var tree = try HexTree3.init(allocator, 256, Vec2f{ 0, 0 });
+    defer tree.deinit();
+
+    const t_0 = time.microTimestamp();
+    for (0..random_len) |i| {
+        const ball = Ball2f{ .centre = random_vecs[i], .radius = 0.001 * random_floats[i] };
+        _ = try tree.addBody(ball);
+    }
+    const t_1 = time.microTimestamp();
+    tree.updateBounds();
+    const t_2 = time.microTimestamp();
+    var overlap_buff: [random_len]u32 = undefined;
+    var overlap_count: u32 = 0;
+    for (random_balls) |b| {
+        const overlaps_found = tree.getOverlappingIndexes(&overlap_buff, b);
+        overlap_count += @truncate(overlaps_found.len);
+    }
+    const t_3 = time.microTimestamp();
+    std.debug.print(
+        "Found {} overlaps in {} us; time breakdown:\n",
+        .{ overlap_count, t_3 - t_0 },
+    );
+    std.debug.print(
+        "Adding took {} us; updating took {} us; overlap check took {} us.\n",
+        .{ t_1 - t_0, t_2 - t_1, t_3 - t_2 },
+    );
 }
+
 fn benchmarkSquareTreeIndexing(allocator: std.mem.Allocator) !void {
     std.debug.print("Starting square-tree benchmark...", .{});
     const tree_depth = 4;
@@ -147,7 +177,7 @@ fn benchmarkVectorMaths() void {
     );
 }
 
-fn genRandomFloats() void {
+fn genRandomData() void {
     if (random_data_generated) return;
     std.debug.print("Generating {} random floats...\n", .{random_len});
     for (0..random_len) |i| random_floats[i] = core.getRandUniform(0, 1);
@@ -155,6 +185,7 @@ fn genRandomFloats() void {
         const x_index = (i + 2) % random_len;
         const y_index = (i + 7) % random_len;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
+        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.01 * random_floats[i] };
     }
     random_data_generated = true;
 }
@@ -200,7 +231,7 @@ fn initTesting(delete_out_dir: bool) !void {
     }
     palette.deinit();
     // generate random data for tests
-    genRandomFloats();
+    genRandomData();
 }
 
 fn deinitTesting() void {
