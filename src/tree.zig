@@ -62,17 +62,16 @@ fn getMinimialIntegerForRange(comptime len: u32) type {
         256 => return u8,
         1024 => return u10,
         4096 => return u12,
+        16384 => return u14,
         65536 => return u16,
+        262144 => return u18,
         1048576 => return u20,
+        4194304 => return u22,
         16777216 => return u24,
         else => unreachable,
     }
 }
 
-// IDEA: Rework indexing so that we just use unsigned integers to identify leaf nodes.
-//       Queries for higher level nodes can be supported by storing node info in a 2D array.
-//       This could make usage more convenient by eliminating slices + arrays - may also improve performance.
-// IDEA: the first implementation updates bounds as soon as things are added, might be good to add a lazy option in future.
 // TODO: check if having grid-size as a comptime parameter actually improves performance
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_size: f32) type {
@@ -219,11 +218,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             }
         }
 
-        // TODO: unfortunately, we can't actually return information that will help retrieve the specific ball here
-        //      What we really want to do is have a way of keeping track of where the ball is in the structure (e.g., leaf index)
-        //      And also have a way of easily checking potential collisions (without double counting).
-        //      There must be some way of doing this?
-        //      For now we are just going to return the indexes of all leaves that overlap with the ball
+        // TODO: update this to return useful indexes
         fn getOverlappingChildren(self: Self, buff: []index_type, b: Ball2f, level: u8, level_index: index_type) []index_type {
             var buff_index: usize = 0;
             if (level == depth - 1) {

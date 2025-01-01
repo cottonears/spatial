@@ -684,9 +684,6 @@ pub const LeafNode = struct {
     }
 };
 
-const testing = std.testing;
-const tolerance = 0.0001;
-
 test "test leaf node" {
     var leaf = try LeafNode.init(testing.allocator, 7, Vec2f{ 0, 0 }, 16);
     defer leaf.deinit();

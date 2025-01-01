@@ -1,6 +1,6 @@
 const std = @import("std");
 const core = @import("core.zig");
-const data = @import("tree.zig");
+const tree = @import("tree.zig");
 const svg = @import("svg.zig");
 const Vec2f = core.Vec2f;
 const Vec3f = core.Vec3f;
@@ -47,23 +47,23 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     const tree_depth = 3;
-    const QuadTree3 = data.SquareTree(2, tree_depth, 1.0);
-    const leaf_cap = 2 * random_len / (QuadTree3.num_leaves + QuadTree3.num_parents);
-    var tree = try QuadTree3.init(allocator, leaf_cap, Vec2f{ 0, 0 });
-    defer tree.deinit();
+    const TreeType = tree.SquareTree(2, tree_depth, 1.0);
+    const leaf_cap = 4 * random_len / (TreeType.num_leaves + TreeType.num_parents);
+    var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 });
+    defer qt.deinit();
 
     const t_0 = time.microTimestamp();
     for (0..random_len) |i| {
         const ball = Ball2f{ .centre = random_vecs[i], .radius = 0.001 * random_floats[i] };
-        _ = try tree.addBody(ball);
+        _ = try qt.addBody(ball);
     }
     const t_1 = time.microTimestamp();
-    tree.updateBounds();
+    qt.updateBounds();
     const t_2 = time.microTimestamp();
-    var overlap_buff: [random_len]QuadTree3.index_type = undefined;
+    var overlap_buff: [random_len]TreeType.index_type = undefined;
     var overlap_count: u32 = 0;
     for (random_balls) |b| {
-        const overlaps_found = tree.getOverlappingIndexes(&overlap_buff, b);
+        const overlaps_found = qt.getOverlappingIndexes(&overlap_buff, b);
         overlap_count += @truncate(overlaps_found.len);
     }
     const t_3 = time.microTimestamp();
@@ -79,15 +79,15 @@ fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
 
 fn benchmarkTreeIndexing(allocator: std.mem.Allocator) !void {
     std.debug.print("Starting square-tree benchmark...\n", .{});
-    const tree_depth = 2;
-    const HexTree4 = data.SquareTree(4, tree_depth, 1.0);
-    var tree = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 });
-    defer tree.deinit();
+    const tree_depth = 4;
+    const HexTree4 = tree.SquareTree(4, tree_depth, 1.0);
+    var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 });
+    defer ht.deinit();
     var ln_sum_1: usize = 0;
 
     const t_0 = time.microTimestamp();
     for (0..random_len) |i| {
-        const ln_1 = tree.getLeafIndexForPoint(random_vecs[i]);
+        const ln_1 = ht.getLeafIndexForPoint(random_vecs[i]);
         ln_sum_1 += ln_1;
     }
     const t_1 = time.microTimestamp();
@@ -97,29 +97,6 @@ fn benchmarkTreeIndexing(allocator: std.mem.Allocator) !void {
     std.debug.print(
         "1. Benchmark results for path-to-point ({} points):\nTook {} us, differences = {}, ln-sum = {}.\n",
         .{ random_len, t_1 - t_0, any_diff, ln_sum_1 },
-    );
-}
-
-fn benchmarkSquareTree2Indexing(allocator: std.mem.Allocator) !void {
-    std.debug.print("Starting square-tree 2 benchmark...\n", .{});
-    const tree_depth = 2;
-    const HexTree4 = data.SquareTree(8, tree_depth, 1.0);
-    var tree = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 });
-    defer tree.deinit();
-
-    var ln_sum_1: usize = 0;
-
-    const t_0 = time.microTimestamp();
-    for (0..random_len) |i| {
-        const ln_1 = tree.getLeafIndexForPoint(random_vecs[i]);
-        ln_sum_1 += ln_1;
-    }
-    const t_1 = time.microTimestamp();
-    const t_2 = time.microTimestamp();
-
-    std.debug.print(
-        "2. Benchmark results for path-to-point ({} points):\nV1 took {} us, V2 took {} us; ln-sum = {}.\n",
-        .{ random_len, t_1 - t_0, t_2 - t_1, ln_sum_1 },
     );
 }
 
@@ -202,18 +179,18 @@ test "hex tree" {
     try initTesting(false);
     defer deinitTesting();
     const tree_depth = 3;
-    const HexTree3 = data.SquareTree(4, tree_depth, 1.0);
+    const HexTree3 = tree.SquareTree(4, tree_depth, 1.0);
     HexTree3.printTypeInfo();
-    var tree = try HexTree3.init(testing.allocator, 8, Vec2f{ 0, 0 });
-    defer tree.deinit();
+    var ht = try HexTree3.init(testing.allocator, 8, Vec2f{ 0, 0 });
+    defer ht.deinit();
 
     // check the random points are binned correctly
     const max_dist_expected = 0.5 * @sqrt(2 * (0.015625 * 0.015625)); // to the centre of a leaf node
     var max_dist_found: f32 = 0.0;
     for (0..random_len) |i| {
         const point = random_vecs[i];
-        const index = tree.getLeafIndexForPoint(point);
-        const centre = tree.getNodeCentre(tree_depth, index);
+        const index = ht.getLeafIndexForPoint(point);
+        const centre = ht.getNodeCentre(tree_depth, index);
         const dist = core.norm(point - centre);
         if (i < 8 or dist > max_dist_expected) { // print details of the first few points, or any that are far from their leaf node's centre
             std.debug.print(
@@ -239,9 +216,9 @@ test "hex tree" {
         for (0..lvl_end_index) |i| {
             // TODO: add some way of retrieving points for non-leaf nodes to get this working again
             const index = HexTree3.getPredeccessorIndex(lvl, @intCast(i));
-            const node_origin = tree.getNodeOrigin(lvl, index);
-            const node_centre = tree.getNodeCentre(lvl, index);
-            const node_corner = tree.getNodeCorner(lvl, index);
+            const node_origin = ht.getNodeOrigin(lvl, index);
+            const node_centre = ht.getNodeCentre(lvl, index);
+            const node_corner = ht.getNodeCorner(lvl, index);
             const node_label = try std.fmt.bufPrint(&text_buff, "{X}", .{index});
             try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
             try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
