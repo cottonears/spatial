@@ -566,23 +566,6 @@ test "hex tree overlap" {
 //         return body;
 //     }
 
-
-//! This module contains spatial data structures.
-
-const std = @import("std");
-const core = @import("core.zig");
-const svg = @import("svg.zig");
-
-const Vec2f = core.Vec2f;
-const Vec3f = core.Vec3f;
-const Vec4f = core.Vec4f;
-const Vec6f = core.Vec6f;
-const Vec8f = core.Vec8f;
-const Vec12f = core.Vec12f;
-const Vec16f = core.Vec16f;
-const Ball2f = core.Ball2f;
-const Box2f = core.Box2f;
-
 /// Combines a node number and body index to produce a 'tree index'.
 /// This is a number that universally identifies a body within its tree.
 pub inline fn getTreeIndex(node_number: u16, body_index: u8) u24 {
