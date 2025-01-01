@@ -8,19 +8,19 @@ const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 
 /// Raises a number to the power of (2 * n). Can be used at comptime.
-fn pow2n(comptime base: u5, comptime n: u8) usize {
+fn pow2n(comptime base: u8, comptime n: u8) usize {
     var s: usize = 1;
     inline for (0..n) |_| s = s * base * base;
     return s;
 }
 
-fn getNodesPerLevel(comptime base: u5, comptime depth: u8) [depth]usize {
+fn getNodesPerLevel(comptime base: u8, comptime depth: u8) [depth]usize {
     var npl: [depth]usize = undefined;
     inline for (0..depth) |d| npl[d] = pow2n(base, 1 + @as(u32, @intCast(d)));
     return npl;
 }
 
-fn getNodesAboveLevel(comptime base: u5, comptime depth: u8) [depth]usize {
+fn getNodesAboveLevel(comptime base: u8, comptime depth: u8) [depth]usize {
     const npl = getNodesPerLevel(base, depth);
     var nodes_above: [depth]usize = undefined;
     var sum: usize = 0;
@@ -31,7 +31,7 @@ fn getNodesAboveLevel(comptime base: u5, comptime depth: u8) [depth]usize {
     return nodes_above;
 }
 
-fn getSizePerLevel(comptime base: u5, comptime depth: u8, comptime size: f32) [depth]f32 {
+fn getSizePerLevel(comptime base: u8, comptime depth: u8, comptime size: f32) [depth]f32 {
     var size_per_lvl: [depth]f32 = undefined;
     var last_size = size;
     inline for (0..depth) |d| {
@@ -41,17 +41,32 @@ fn getSizePerLevel(comptime base: u5, comptime depth: u8, comptime size: f32) [d
     return size_per_lvl;
 }
 
-fn getScalePerLevel(comptime base: u5, comptime depth: u8, comptime size: f32) [depth]f32 {
+fn getScalePerLevel(comptime base: u8, comptime depth: u8, comptime size: f32) [depth]f32 {
     const size_per_lvl = getSizePerLevel(base, depth, size);
     var scale_per_lvl: [depth]f32 = undefined;
     inline for (0..depth) |i| scale_per_lvl[i] = 1.0 / size_per_lvl[i];
     return scale_per_lvl;
 }
 
-fn getReversedRange(comptime len: u5) [len]u5 {
-    var range: [len]u5 = undefined;
+fn getReversedRange(comptime len: u8) [len]u8 {
+    var range: [len]u8 = undefined;
     inline for (0..len) |i| range[i] = len - i - 1;
     return range;
+}
+
+fn getMinimialIntegerForRange(comptime len: u32) type {
+    switch (len) {
+        4 => return u2,
+        16 => return u4,
+        64 => return u6,
+        256 => return u8,
+        1024 => return u10,
+        4096 => return u12,
+        65536 => return u16,
+        1048576 => return u20,
+        16777216 => return u24,
+        else => unreachable,
+    }
 }
 
 // IDEA: Rework indexing so that we just use unsigned integers to identify leaf nodes.
@@ -60,27 +75,22 @@ fn getReversedRange(comptime len: u5) [len]u5 {
 // IDEA: the first implementation updates bounds as soon as things are added, might be good to add a lazy option in future.
 // TODO: check if having grid-size as a comptime parameter actually improves performance
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
-pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime square_size: f32) type {
-    const base: u5 = switch (index_type) {
-        u8 => 8 / depth,
-        u16 => 16 / depth,
-        u24 => 24 / depth,
-        u32 => 32 / depth,
-        else => unreachable,
-    };
-
+pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_size: f32) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
         bodies: [num_leaves]std.ArrayList(Ball2f) = undefined,
         bounds: [depth][]Ball2f = undefined,
 
-        pub const nodes_in_level = getNodesPerLevel(base, depth); // the number of nodes in each level
-        pub const nodes_above_level = getNodesAboveLevel(base, depth); // cumulative number of nodes above each level
+        pub const nodes_in_level = getNodesPerLevel(base_number, depth); // the number of nodes in each level
+        pub const nodes_above_level = getNodesAboveLevel(base_number, depth); // cumulative number of nodes above each level
         pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
-        pub const num_nodes = nodes_above_level[depth - 1] - num_leaves; // total number of nodes
-        pub const num_parents = num_nodes - num_leaves; // the number of non-leaf nodes
+        pub const num_parents = nodes_above_level[depth - 1]; // the number of non-leaf nodes
+        pub const num_nodes = num_parents + num_leaves; // total number of nodes
         pub const reverse_levels = getReversedRange(depth);
+        pub const index_type = getMinimialIntegerForRange(num_leaves);
+        const base: index_type = @intCast(base_number);
+        const base_squared: index_type = base * base;
         const size_per_level = getSizePerLevel(base, depth, square_size); // size of each square per level
         const scale_per_level = getScalePerLevel(base, depth, square_size); // reciprocal of the above
         const Self = @This();
@@ -109,28 +119,29 @@ pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime squar
 
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
-            std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ index_type, depth, square_size });
+            std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, square_size });
+            std.debug.print("   Index type: {} ({} bytes)\n", .{ @typeInfo(index_type), @sizeOf(index_type) });
+            std.debug.print("   Number leaf nodes: {d}\n", .{num_leaves});
+            std.debug.print("   Total nodes: {d}\n", .{num_nodes});
             std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
             std.debug.print("   Nodes above level: {any}\n", .{nodes_above_level});
             std.debug.print("   Size per level: {any}\n", .{size_per_level});
-            std.debug.print("   Scale per level: {any}\n", .{scale_per_level});
-            std.debug.print("   Number leaf nodes: {d}\n", .{num_leaves});
-            std.debug.print("   Total number nodes: {d}\n", .{num_nodes});
             std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
-            std.debug.print("   Index type: {} ({} bytes)\n", .{ @typeInfo(index_type), @sizeOf(index_type) });
         }
 
         /// Converts a leaf index to the 'level index' of its successor at the specified level
-        pub fn getPredeccessorIndex(level: u5, leaf_index: index_type) index_type {
-            const lvl_diff: u3 = @truncate(depth - level - 1);
-            return @intCast(leaf_index >> (lvl_diff * @as(u3, @intCast(base))));
+        pub fn getPredeccessorIndex(level: u8, leaf_index: index_type) index_type {
+            const lvl_diff = depth - level - 1;
+            return leaf_index >> @truncate(lvl_diff * base);
         }
 
         /// Gets the indexes of the immediate children of the identified node
-        pub fn getChildIndexes(level: u5, level_index: index_type) [base * base]index_type {
+        pub fn getChildIndexes(level: u8, level_index: index_type) [base * base]index_type {
             std.debug.assert(level < depth - 1);
             var child_indexes: [base * base]index_type = undefined;
-            for (0..base * base) |i| child_indexes[i] = (level_index << base) + i;
+            for (0..base_squared) |i| {
+                child_indexes[i] = (level_index << base) + @as(index_type, @intCast(i));
+            }
             return child_indexes;
         }
 
@@ -143,63 +154,50 @@ pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime squar
         /// Gets the path to the leaf node the query point lies within.
         /// Asserts the point is within the region covered by this tree.
         pub fn getLeafIndexForPoint(self: Self, point: Vec2f) index_type {
-            std.debug.assert(self.isPointWithinRegion(point));
-            var d_remaining = point - self.origin;
+            const d = point - self.origin;
             var index: index_type = 0;
             for (0..depth) |lvl| {
-                const row: index_type = @intFromFloat(scale_per_level[lvl] * d_remaining[1]);
-                const col: index_type = @intFromFloat(scale_per_level[lvl] * d_remaining[0]);
+                const row = @as(index_type, @intFromFloat(scale_per_level[lvl] * d[1])) % base;
+                const col = @as(index_type, @intFromFloat(scale_per_level[lvl] * d[0])) % base;
                 index = (index << base) + row * base + col;
-                d_remaining -= Vec2f{ // TODO: see if we can get rid of this with clever truncation ?
-                    size_per_level[lvl] * core.asf32(col),
-                    size_per_level[lvl] * core.asf32(row),
-                };
-                // std.debug.print(
-                //     "{}. d_lvl = {d:.2}, lvl_scale = {d:.3}; row = {}, col = {}\n",
-                //     .{ lvl, d_remaining, scale_per_level[lvl], row, col },
-                // );
             }
             return index;
         }
 
         /// Gets the position of a point offset from the identified node's origin
-        pub fn getNodePoint(self: Self, path_slice: []const index_type, x_offset: f32, y_offset: f32) Vec2f {
-            var d_lvl = self.origin;
-            for (path_slice, 0..) |index, lvl| {
+        pub fn getNodePoint(self: Self, level: u8, index: index_type, x_offset: f32, y_offset: f32) Vec2f {
+            var point = self.origin;
+            for (0..level) |lvl| {
                 // NOTE: This is probably quite slow in practice due to integer divisions.
+                const lvl_index = getPredeccessorIndex(@intCast(lvl), index);
                 const lvl_size = size_per_level[lvl];
-                const row = index / base;
-                const col = index % base;
-                d_lvl += Vec2f{
-                    lvl_size * core.asf32(col),
-                    lvl_size * core.asf32(row),
-                };
+                const row = (lvl_index / base) % base;
+                const col = lvl_index % base;
+                const x_lvl = if (lvl < level - 1) core.asf32(col) else x_offset + core.asf32(col);
+                const y_lvl = if (lvl < level - 1) core.asf32(row) else y_offset + core.asf32(row);
+                point += Vec2f{ lvl_size * x_lvl, lvl_size * y_lvl };
             }
-            d_lvl += Vec2f{
-                size_per_level[path_slice.len - 1] * x_offset,
-                size_per_level[path_slice.len - 1] * y_offset,
-            };
-            return d_lvl;
+            return point;
         }
 
         /// Gets the origin point for the identified node.
-        pub fn getNodeOrigin(self: Self, path_slice: []const index_type) Vec2f {
-            return self.getNodePoint(path_slice, 0.0, 0.0);
+        pub fn getNodeOrigin(self: Self, level: u8, index: index_type) Vec2f {
+            return self.getNodePoint(level, index, 0.0, 0.0);
         }
 
         /// Gets the centre point of the identified node.
-        pub fn getNodeCentre(self: Self, path_slice: []const index_type) Vec2f {
-            return self.getNodePoint(path_slice, 0.5, 0.5);
+        pub fn getNodeCentre(self: Self, level: u8, index: index_type) Vec2f {
+            return self.getNodePoint(level, index, 0.5, 0.5);
         }
 
         /// Gets the corner opposite the origin for the identified node.
-        pub fn getNodeCorner(self: Self, path_slice: []const index_type) Vec2f {
-            return self.getNodePoint(path_slice, 1.0, 1.0);
+        pub fn getNodeCorner(self: Self, level: u8, index: index_type) Vec2f {
+            return self.getNodePoint(level, index, 1.0, 1.0);
         }
 
         /// Updates the bounding volumes within the tree.
         pub fn updateBounds(self: *Self) void {
-            while (reverse_levels) |lvl| {
+            for (reverse_levels) |lvl| {
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
                         var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
@@ -211,9 +209,9 @@ pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime squar
                 } else { // higher-level nodes
                     for (0..self.bounds[lvl].len) |i| {
                         var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
-                        const child_indexes = getChildIndexes(lvl, i);
+                        const child_indexes = getChildIndexes(lvl, @intCast(i));
                         for (child_indexes) |j| {
-                            ball = core.getEncompassingBall(ball, ball.self.bounds[lvl + 1][j]);
+                            ball = core.getEncompassingBall(ball, self.bounds[lvl + 1][j]);
                         }
                         self.bounds[lvl][i] = ball;
                     }
@@ -226,8 +224,8 @@ pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime squar
         //      And also have a way of easily checking potential collisions (without double counting).
         //      There must be some way of doing this?
         //      For now we are just going to return the indexes of all leaves that overlap with the ball
-        fn getOverlappingChildren(self: Self, buff: []u32, b: Ball2f, level: u5, level_index: index_type) []index_type {
-            var buff_index: u32 = 0;
+        fn getOverlappingChildren(self: Self, buff: []index_type, b: Ball2f, level: u8, level_index: index_type) []index_type {
+            var buff_index: usize = 0;
             if (level == depth - 1) {
                 for (self.bodies[level_index].items) |a| {
                     if (a.overlapsBall(b)) {
@@ -239,29 +237,29 @@ pub fn SquareTree2(comptime index_type: type, comptime depth: u5, comptime squar
                 const child_indexes = getChildIndexes(level, level_index);
                 for (child_indexes) |i| {
                     if (self.bounds[level + 1][i].overlapsBall(b)) {
-                        buff_index += getOverlappingChildren(self, buff[buff_index..], b, level + 1, i).len;
+                        const overlaps = getOverlappingChildren(self, buff[buff_index..], b, level + 1, i);
+                        buff_index += overlaps.len;
                     }
                 }
             }
             // TODO: consider truncating buff_index if it is too large for the buffer?
-            return if (buff_index > 0) buff[0..buff_index] else &[0]u32{};
+            return if (buff_index > 0) buff[0..buff_index] else &[0]index_type{};
         }
 
-        pub fn getOverlappingIndexes(self: Self, buff: []u32, b: Ball2f) []u32 {
-            var buff_index: u32 = 0;
+        pub fn getOverlappingIndexes(self: Self, buff: []index_type, b: Ball2f) []index_type {
+            var buff_index: usize = 0;
             for (0..nodes_in_level[0]) |n| {
-                buff_index += self.getOverlappingChildren(buff, buff_index, b, 0, n);
+                const overlaps = self.getOverlappingChildren(buff[buff_index..], b, 0, @intCast(n));
+                buff_index += overlaps.len;
             }
-            return if (buff_index > 0) buff[0..buff_index] else &[0]u32{};
+            return if (buff_index > 0) buff[0..buff_index] else &[0]index_type{};
         }
 
-        // pub fn addBody(self: *Self, ball: Ball2f) !u32 {
-        //     const path = self.getPathForPoint(ball.centre);
-        //     const leaf_num = getLeafNumber(path);
-        //     const leaf_index = leaf_num - num_parents;
-        //     try self.leaf_lists[leaf_index].append(ball);
-        //     return leaf_num;
-        // }
+        pub fn addBody(self: *Self, ball: Ball2f) !index_type {
+            const leaf_index = self.getLeafIndexForPoint(ball.centre);
+            try self.bodies[leaf_index].append(ball);
+            return leaf_index;
+        }
     };
 }
 
@@ -269,18 +267,18 @@ const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
-    const Tree2x8 = SquareTree2(u16, 8, 2000.0);
+    const Tree2x8 = SquareTree(2, 8, 2000.0);
     var qt = Tree2x8{ .allocator = std.testing.allocator, .origin = Vec2f{ 0, 0 } };
     defer qt.deinit();
 
-    const Tree4x4 = SquareTree2(u16, 4, 2000.0);
+    const Tree4x4 = SquareTree(4, 4, 2000.0);
     var ht = Tree4x4{ .allocator = std.testing.allocator, .origin = Vec2f{ 0, 0 } };
     defer ht.deinit();
 }
 
 test "quad tree indexing" {
-    const tree_depth = 4;
-    const QuadTree4 = SquareTree2(u8, tree_depth, 8.0);
+    const tree_depth = 3;
+    const QuadTree4 = SquareTree(2, tree_depth, 8.0);
     var qt = try QuadTree4.init(testing.allocator, 0, Vec2f{ 0, 0 });
     defer qt.deinit();
 
@@ -295,163 +293,80 @@ test "quad tree indexing" {
 
     const pt_a = Vec2f{ 4.1, 4.1 };
     const index_a = qt.getLeafIndexForPoint(pt_a);
-    const parent_a = QuadTree4.getPredeccessorIndex(0, index_a);
-    std.debug.print("Index for {d:.3}: {X}; parent = {X}\n", .{ pt_a, index_a, parent_a });
+    const parent_a = QuadTree4.getPredeccessorIndex(1, index_a);
+    const grandparent_a = QuadTree4.getPredeccessorIndex(0, index_a);
+    try testing.expectEqual(48, index_a);
+    try testing.expectEqual(12, parent_a);
+    try testing.expectEqual(3, grandparent_a);
 
     const pt_b = Vec2f{ 7.99, 7.99 };
     const ln_num_b = qt.getLeafIndexForPoint(pt_b);
     try testing.expectEqual(QuadTree4.num_leaves - 1, ln_num_b);
     for (0..QuadTree4.num_leaves) |n| {
-        const ln_num = QuadTree4.getPredeccessorIndex(2, @intCast(n));
-        try testing.expectEqual(n / 4, ln_num);
+        const ln_num = QuadTree4.getPredeccessorIndex(0, @intCast(n));
+        try testing.expectEqual(n / 16, ln_num);
     }
 }
 
-// test "hex tree indexing" {
-//     const tree_depth = 2;
-//     const HexTree2 = SquareTree(u4, tree_depth, 8.0);
-//     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
-//     defer tree.deinit();
+test "hex tree indexing" {
+    const tree_depth = 2;
+    const HexTree2 = SquareTree(4, tree_depth, 8.0);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
+    defer tree.deinit();
 
-//     const pt_check_1 = tree.isPointWithinRegion(Vec2f{ 0, 0 });
-//     const pt_check_2 = tree.isPointWithinRegion(Vec2f{ 5, 7 });
-//     const pt_check_3 = tree.isPointWithinRegion(Vec2f{ -1, 3 });
-//     const pt_check_4 = tree.isPointWithinRegion(Vec2f{ 8.0, 8.0 });
-//     try testing.expectEqual(true, pt_check_1);
-//     try testing.expectEqual(true, pt_check_2);
-//     try testing.expectEqual(false, pt_check_3);
-//     try testing.expectEqual(false, pt_check_4);
+    const pt_check_1 = tree.isPointWithinRegion(Vec2f{ 0, 0 });
+    const pt_check_2 = tree.isPointWithinRegion(Vec2f{ 5, 7 });
+    const pt_check_3 = tree.isPointWithinRegion(Vec2f{ -1, 3 });
+    const pt_check_4 = tree.isPointWithinRegion(Vec2f{ 8.0, 8.0 });
+    try testing.expectEqual(true, pt_check_1);
+    try testing.expectEqual(true, pt_check_2);
+    try testing.expectEqual(false, pt_check_3);
+    try testing.expectEqual(false, pt_check_4);
 
-//     const pt_a = Vec2f{ 4.1, 2.1 };
-//     const path_to_a = tree.getPathForPoint(pt_a);
-//     const ln_num_a1 = HexTree2.getLeafNumber(path_to_a);
-//     const ln_num_a2 = HexTree2.getNodeNumber(path_to_a[0..]);
-//     const node_num_parent_a = HexTree2.getNodeNumber(path_to_a[0..1]);
-//     try testing.expectEqual(112, ln_num_a1);
-//     try testing.expectEqual(112, ln_num_a2);
-//     try testing.expectEqual(6, node_num_parent_a);
+    const pt_a = Vec2f{ 4.1, 2.1 };
+    const index_a = tree.getLeafIndexForPoint(pt_a);
+    const parent_a = HexTree2.getPredeccessorIndex(0, index_a);
+    try testing.expectEqual(96, index_a);
+    try testing.expectEqual(6, parent_a);
 
-//     const pt_b = Vec2f{ 7.99, 7.99 };
-//     const path_vec_b = tree.getPathForPoint(pt_b);
-//     const ln_num_b = HexTree2.getLeafNumber(path_vec_b);
-//     try testing.expectEqual(HexTree2.num_nodes - 1, ln_num_b);
-//     const first_leaf = HexTree2.num_nodes - HexTree2.num_leaves;
-//     for (first_leaf..HexTree2.num_nodes) |n| {
-//         const path: @Vector(tree_depth, u4) = HexTree2.getPathToLeafNode(@intCast(n));
-//         const ln_num = HexTree2.getLeafNumber(path);
-//         try testing.expectEqual(n, ln_num);
-//     }
-// }
+    const pt_b = Vec2f{ 7.99, 7.99 };
+    const index_b = tree.getLeafIndexForPoint(pt_b);
+    try testing.expectEqual(HexTree2.num_leaves - 1, index_b);
 
-// test "hex bounds" {
-//     const tree_depth = 2;
-//     const HexTree2 = SquareTree(u4, tree_depth, 1.0);
-//     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
-//     defer tree.deinit();
+    for (0..HexTree2.num_leaves) |n| {
+        const parent_index = HexTree2.getPredeccessorIndex(0, @intCast(n));
+        try testing.expectEqual(n / 16, parent_index);
+    }
+}
 
-//     const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
-//     const b = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 };
-//     const c = Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 };
-//     const index_a = try tree.addBody(a);
-//     const index_b = try tree.addBody(b);
-//     const index_c = try tree.addBody(c);
-//     tree.updateBounds();
-//     std.debug.print("index_a = {}; index_b = {}; index_c = {}.\n", .{ index_a, index_b, index_c });
+test "hex tree overlap" {
+    const tree_depth = 2;
+    const HexTree2 = SquareTree(4, tree_depth, 1.0);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
+    defer tree.deinit();
 
-//     for (0..HexTree2.num_nodes) |n| {
-//         if (tree.node_empty[n]) continue;
-//         std.debug.print("Node {d} bball = {any}\n", .{ n, tree.node_bballs[n] });
-//     }
-// }
+    const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
+    const b = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 };
+    const c = Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 };
+    const index_a = try tree.addBody(a);
+    const index_b = try tree.addBody(b);
+    const index_c = try tree.addBody(c);
+    tree.updateBounds();
 
-// test "hex tree overlap" {
-//     const tree_depth = 2;
-//     const HexTree2 = SquareTree(u4, tree_depth, 1.0);
-//     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
-//     defer tree.deinit();
+    var index_buff: [8]HexTree2.index_type = undefined;
+    const query_region_1 = Ball2f{ .centre = Vec2f{ 0.9, 0.5 }, .radius = 0.1 };
+    const overlap_indexes_1 = tree.getOverlappingIndexes(&index_buff, query_region_1);
+    try testing.expectEqual(0, overlap_indexes_1.len);
+    try testing.expectEqual(false, index_a == index_b);
+    try testing.expectEqual(false, index_a == index_c);
+    try testing.expectEqual(false, index_b == index_c);
 
-//     const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
-//     const b = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 };
-//     const c = Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 };
-//     const index_a = try tree.addBody(a);
-//     const index_b = try tree.addBody(b);
-//     const index_c = try tree.addBody(c);
-//     tree.updateBounds();
-//     std.debug.print("index_a = {}; index_b = {}; index_c = {}.\n", .{ index_a, index_b, index_c });
+    const query_region_2 = Ball2f{ .centre = Vec2f{ -3.5, -3.5 }, .radius = 1.0 };
+    const overlap_indexes_2 = tree.getOverlappingIndexes(&index_buff, query_region_2);
+    try testing.expectEqual(0, overlap_indexes_2.len);
 
-//     var index_buff: [8]u32 = undefined;
-//     const query_region_1 = Ball2f{ .centre = Vec2f{ 0.9, 0.5 }, .radius = 0.1 };
-//     const overlap_indexes_1 = tree.getOverlappingIndexes(&index_buff, query_region_1);
-//     try testing.expectEqual(0, overlap_indexes_1.len);
-//     try testing.expectEqual(false, index_a == index_b);
-//     try testing.expectEqual(false, index_a == index_c);
-//     try testing.expectEqual(false, index_b == index_c);
-
-//     const query_region_2 = Ball2f{ .centre = Vec2f{ -3.5, -3.5 }, .radius = 1.0 };
-//     const overlap_indexes_2 = tree.getOverlappingIndexes(&index_buff, query_region_2);
-//     try testing.expectEqual(0, overlap_indexes_2.len);
-
-//     const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
-//     const overlap_indexes_3 = tree.getOverlappingIndexes(&index_buff, query_region_3);
-//     try testing.expectEqual(3, overlap_indexes_3.len);
-//     std.debug.print("overlap 3 = {any}.\n", .{overlap_indexes_3});
-// }
-
-// pub const LeafNode = struct {
-//     node_number: u16,
-//     bodies: std.ArrayList(Ball2f), // IDEA: try using a MultiArrayList here and compare performance
-//     bball: Ball2f,
-//     // bball_centre: Vec2f,
-//     // bball_radius: f32 = 0,
-//     // bbox_width: f32 = 0.0, TODO: add these back in
-//     // bbox_height: f32 = 0.0,
-//     bounds_require_update: bool = false,
-//     const Self = @This();
-
-//     /// Initialises the LeafNode and ensures it has the desired capacity.
-//     pub fn init(allocator: std.mem.Allocator, node_number: u16, centre: Vec2f, capacity: u8) !Self {
-//         const bodies = try std.ArrayList(Ball2f).initCapacity(allocator, capacity);
-//         return .{
-//             .bball = Ball2f{ .centre = centre },
-//             .bodies = bodies,
-//             .node_number = node_number,
-//         };
-//     }
-
-//     /// Destroys the LeafNode and frees any allocated memory.
-//     pub fn deinit(self: *Self) void {
-//         self.bodies.deinit();
-//     }
-
-//     /// Returns the number of items stored in the LeafNode
-//     pub fn length(self: Self) u8 {
-//         return @intCast(self.bodies.items.len);
-//     }
-
-//     /// Attempts to add a body to this node and returns its tree index if successful.
-//     /// Not thread safe.
-//     pub fn addBody(self: *Self, b: Ball2f) !u24 {
-//         // IDEA: might be worth having an option to record a log of capacity expansions
-//         const i: u24 = @intCast(self.bodies.items.len);
-//         std.debug.assert(i < 256);
-//         try self.bodies.append(b);
-//         self.bounds_require_update = true; // self.bounds_require_update or body is not enclosed by existing bounds
-//         return getTreeIndex(self.node_number, @intCast(i));
-//     }
-
-//     /// Gets a copy of the body with the specified index
-//     pub fn getBody(self: Self, tree_index: u24) Ball2f {
-//         const body_index = getBodyIndex(tree_index);
-//         std.debug.assert(body_index < self.length());
-//         return self.bodies.items[body_index];
-//     }
-
-//     /// Removes the body at the specified index and returns it.
-//     /// NOTE: Invalidates all body indexes for this leaf-node!
-//     pub fn removeBody(self: *Self, index: u24) Ball2f {
-//         const body_index = getBodyIndex(index);
-//         std.debug.assert(body_index < self.length());
-//         const body = self.bodies.swapRemove(body_index);
-//         self.bounds_require_update = true; // or body is not within margin of the enclosed bounds
-//         return body;
-//     }
+    const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
+    const overlap_indexes_3 = tree.getOverlappingIndexes(&index_buff, query_region_3);
+    try testing.expectEqual(3, overlap_indexes_3.len);
+    std.debug.print("overlap 3 = {any}.\n", .{overlap_indexes_3});
+}
