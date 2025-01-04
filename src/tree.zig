@@ -72,6 +72,18 @@ fn getMinimialIntegerForRange(comptime len: u32) type {
     }
 }
 
+fn getShiftForBase(comptime base_num: u8) comptime_int {
+    switch (base_num) {
+        2 => return @as(u2, 2),
+        4 => return @as(u3, 4),
+        8 => return @as(u3, 6),
+        16 => return @as(u4, 8),
+        else => {
+            @compileError("unsupported base number");
+        },
+    }
+}
+
 // TODO: there still seems to be a bug in getNodePoint - get this working properly!
 // TODO: check if having grid-size as a comptime parameter actually improves performance
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
@@ -85,7 +97,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
         pub const NodeIndex = getMinimialIntegerForRange(num_leaves);
         pub const BodyIndex = struct {
             leaf_index: NodeIndex,
-            body_number: u8, // TODO: make this a comptime parameter
+            body_number: u16, // TODO: make this type a comptime parameter
         };
         pub const nodes_in_level = getNodesPerLevel(base_number, depth); // the number of nodes in each level
         pub const nodes_above_level = getNodesAboveLevel(base_number, depth); // cumulative number of nodes above each level
@@ -93,13 +105,16 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
         pub const num_parents = nodes_above_level[depth - 1]; // the number of non-leaf nodes
         pub const num_nodes = num_parents + num_leaves; // total number of nodes
         pub const reverse_levels = getReversedRange(depth);
+        pub const size_per_level = getSizePerLevel(base, depth, square_size); // size of each square per level
+        pub const scale_per_level = getScalePerLevel(base, depth, square_size); // reciprocal of the above
         const base: NodeIndex = @intCast(base_number);
         const base_squared: NodeIndex = base * base;
-        const size_per_level = getSizePerLevel(base, depth, square_size); // size of each square per level
-        const scale_per_level = getScalePerLevel(base, depth, square_size); // reciprocal of the above
+        const level_bitshift = getShiftForBase(base_number);
+
         const Self = @This();
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f) !Self {
+            if (depth < 2) @compileError("SquareTree depth must be greater than 1");
             var leaf_lists: [num_leaves]std.ArrayList(Ball2f) = undefined;
             for (0..num_leaves) |i| {
                 leaf_lists[i] = try std.ArrayList(Ball2f).initCapacity(allocator, leaf_capacity);
@@ -121,6 +136,22 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             for (0..depth) |lvl| self.allocator.free(self.bounds[lvl]);
         }
 
+        /// Converts a leaf index to the of its predecessor at the specified level
+        inline fn getPredeccessorIndex(leaf_index: NodeIndex, pred_level: u8) NodeIndex {
+            const lvl_diff = depth - pred_level - 1;
+            return leaf_index >> @truncate(lvl_diff * level_bitshift);
+        }
+
+        /// Gets the indexes of immediate children of the specified parent node.
+        /// Assumes the parent_index is not an index for a leaf node.
+        inline fn getChildIndexes(parent_index: NodeIndex) [base_squared]NodeIndex {
+            var indexes: [base_squared]NodeIndex = undefined;
+            for (0..base_squared) |i| {
+                indexes[i] = parent_index * base_squared + @as(NodeIndex, @intCast(i));
+            }
+            return indexes;
+        }
+
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
             std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, square_size });
@@ -131,22 +162,6 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             std.debug.print("   Nodes above level: {any}\n", .{nodes_above_level});
             std.debug.print("   Size per level: {any}\n", .{size_per_level});
             std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
-        }
-
-        /// Converts a leaf index to the of its successor at the specified level
-        pub fn getPredeccessorIndex(level: u8, leaf_index: NodeIndex) NodeIndex {
-            const lvl_diff = depth - level - 1;
-            return leaf_index >> @truncate(lvl_diff * base);
-        }
-
-        /// Gets the indexes of the immediate children of the identified node
-        pub fn getChildIndexes(level: u8, level_index: NodeIndex) [base * base]NodeIndex {
-            std.debug.assert(level < depth - 1);
-            var child_indexes: [base * base]NodeIndex = undefined;
-            for (0..base_squared) |i| {
-                child_indexes[i] = (level_index << base) + @as(NodeIndex, @intCast(i));
-            }
-            return child_indexes;
         }
 
         /// Returns true if the specified point is within the region indexed by this tree, false otherwise.
@@ -163,7 +178,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             for (0..depth) |lvl| {
                 const row = @as(NodeIndex, @intFromFloat(scale_per_level[lvl] * d[1])) % base;
                 const col = @as(NodeIndex, @intFromFloat(scale_per_level[lvl] * d[0])) % base;
-                index = (index << base) + row * base + col; // TODO: this is not correct for base = 8 (should bitshift x 6)
+                index = (index << @truncate(level_bitshift)) + row * base + col;
             }
             return index;
         }
@@ -181,7 +196,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             }
             for (0..level + 1) |lvl| {
                 // NOTE: This is probably quite slow in practice due to integer divisions.
-                const lvl_index = getPredeccessorIndex(@intCast(lvl), index);
+                const lvl_index = getPredeccessorIndex(index, @intCast(lvl));
                 const lvl_size = size_per_level[lvl];
                 const row = (lvl_index / base) % base;
                 const col = lvl_index % base;
@@ -218,10 +233,10 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
                         }
                         self.bounds[lvl][i] = ball;
                     }
-                } else { // higher-level nodes
+                } else { // parent nodes
                     for (0..self.bounds[lvl].len) |i| {
                         var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
-                        const child_indexes = getChildIndexes(lvl, @intCast(i));
+                        const child_indexes = getChildIndexes(@intCast(i));
                         for (child_indexes) |j| {
                             ball = core.getEncompassingBall(ball, self.bounds[lvl + 1][j]);
                         }
@@ -244,7 +259,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
                     }
                 }
             } else { // parent node
-                const child_indexes = getChildIndexes(level, level_index);
+                const child_indexes = getChildIndexes(level_index);
                 for (child_indexes) |i| {
                     if (self.bounds[level + 1][i].overlapsBall(b)) {
                         buff_index += getOverlappingChildren(self, buff[buff_index..], b, level + 1, i).len;
@@ -304,8 +319,8 @@ test "quad tree indexing" {
 
     const pt_a = Vec2f{ 4.1, 4.1 };
     const index_a = qt.getLeafIndexForPoint(pt_a);
-    const parent_a = QuadTree4.getPredeccessorIndex(1, index_a);
-    const grandparent_a = QuadTree4.getPredeccessorIndex(0, index_a);
+    const parent_a = QuadTree4.getPredeccessorIndex(index_a, 1);
+    const grandparent_a = QuadTree4.getPredeccessorIndex(index_a, 0);
     try testing.expectEqual(48, index_a);
     try testing.expectEqual(12, parent_a);
     try testing.expectEqual(3, grandparent_a);
@@ -314,7 +329,7 @@ test "quad tree indexing" {
     const ln_num_b = qt.getLeafIndexForPoint(pt_b);
     try testing.expectEqual(QuadTree4.num_leaves - 1, ln_num_b);
     for (0..QuadTree4.num_leaves) |n| {
-        const ln_num = QuadTree4.getPredeccessorIndex(0, @intCast(n));
+        const ln_num = QuadTree4.getPredeccessorIndex(@intCast(n), 0);
         try testing.expectEqual(n / 16, ln_num);
     }
 }
@@ -336,7 +351,7 @@ test "hex tree indexing" {
 
     const pt_a = Vec2f{ 4.1, 2.1 };
     const index_a = tree.getLeafIndexForPoint(pt_a);
-    const parent_a = HexTree2.getPredeccessorIndex(0, index_a);
+    const parent_a = HexTree2.getPredeccessorIndex(index_a, 0);
     try testing.expectEqual(96, index_a);
     try testing.expectEqual(6, parent_a);
 
@@ -345,7 +360,7 @@ test "hex tree indexing" {
     try testing.expectEqual(HexTree2.num_leaves - 1, index_b);
 
     for (0..HexTree2.num_leaves) |n| {
-        const parent_index = HexTree2.getPredeccessorIndex(0, @intCast(n));
+        const parent_index = HexTree2.getPredeccessorIndex(@intCast(n), 0);
         try testing.expectEqual(n / 16, parent_index);
     }
 }

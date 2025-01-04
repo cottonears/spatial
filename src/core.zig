@@ -1,5 +1,6 @@
 //! This module contains core structs and maths function used throughout the library.
-
+const std = @import("std");
+const rand = std.rand;
 pub const Vec2f = @Vector(2, f32);
 pub const Vec3f = @Vector(3, f32);
 pub const Vec4f = @Vector(4, f32);
@@ -7,8 +8,6 @@ pub const Vec6f = @Vector(6, f32);
 pub const Vec8f = @Vector(8, f32);
 pub const Vec12f = @Vector(12, f32);
 pub const Vec16f = @Vector(16, f32);
-const std = @import("std");
-const rand = std.rand;
 const zero_2f = Vec2f{ 0, 0 };
 const zero_3f = Vec2f{ 0, 0, 0 };
 const zero_4f = Vec2f{ 0, 0, 0, 0 };

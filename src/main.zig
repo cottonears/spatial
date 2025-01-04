@@ -51,7 +51,7 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     const tree_depth = 3;
     const TreeType = tree.SquareTree(2, tree_depth, 1.0);
-    const leaf_cap = 4 * benchmark_len / (TreeType.num_leaves + TreeType.num_parents);
+    const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 });
     defer qt.deinit();
 
@@ -169,11 +169,12 @@ test "square tree" {
     const tree_depth = 2;
     const TreeType = tree.SquareTree(base_num, tree_depth, 1.0);
     TreeType.printTypeInfo();
-    var ht = try TreeType.init(testing.allocator, 8, Vec2f{ 0, 0 });
+    var ht = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 });
     defer ht.deinit();
 
     // check the random points are binned correctly
-    const max_dist_expected = 0.5; // * @sqrt(2 * (0.0625 * 0.0625)); // to the centre of a leaf node
+    const leaf_size = TreeType.size_per_level[tree_depth - 1];
+    const max_dist_expected = 0.5 * @sqrt(2 * (leaf_size * leaf_size));
     var max_dist_found: f32 = 0.0;
     for (0..test_len) |i| {
         const point = random_vecs[i];
@@ -197,7 +198,7 @@ test "square tree" {
     // create an svg image depicting the grid structure of the tree
     var text_buff: [16]u8 = undefined;
     for (TreeType.reverse_levels) |lvl| {
-        var style = solid_styles[2 * lvl];
+        var style = solid_styles[(2 * lvl) % tree_depth];
         style.stroke_width = @truncate(tree_depth - lvl);
         const font_size: u8 = 9 + 3 * (tree_depth - lvl);
         const lvl_end_index = TreeType.nodes_in_level[lvl];
