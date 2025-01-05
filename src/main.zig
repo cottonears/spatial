@@ -49,33 +49,39 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
-    const tree_depth = 3;
+    const tree_depth = 4;
     const TreeType = tree.SquareTree(2, tree_depth, 1.0);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 });
     defer qt.deinit();
+    var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
+    var overlap_count_1: u32 = 0;
+    var overlap_count_2: u32 = 0;
 
     const t_0 = time.microTimestamp();
     for (random_balls) |ball| _ = try qt.addBody(ball);
     const t_1 = time.microTimestamp();
     qt.updateBounds();
     const t_2 = time.microTimestamp();
-    var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
-    var overlap_count: u32 = 0;
     for (random_balls) |b| {
-        const overlaps_found = qt.getOverlappingBodies(&overlap_buff, b);
-        overlap_count += @truncate(overlaps_found.len);
+        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b, false);
+        overlap_count_1 += @truncate(overlaps_found.len);
     }
     const t_3 = time.microTimestamp();
+    for (random_balls) |b| {
+        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b, true);
+        overlap_count_2 += @truncate(overlaps_found.len);
+    }
+    const t_4 = time.microTimestamp();
 
     std.debug.print(
-        "Overlap benchmark: found {} overlaps in {} us. Time breakdown: adding {} us, updating {} us, overlapping {} us.\n",
-        .{ overlap_count, t_3 - t_0, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
+        "Overlap benchmark: found {}/{} overlaps. Add took {} us, update took {} us, overlap checks took {}/{} us.\n",
+        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1, t_3 - t_2, t_4 - t_3 },
     );
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
-    const tree_depth = 4;
+    const tree_depth = 2;
     const HexTree4 = tree.SquareTree(4, tree_depth, 1.0);
     var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 });
     defer ht.deinit();
@@ -100,7 +106,7 @@ fn genRandomData() void {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
-        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.01 * random_floats[i] };
+        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.001 * random_floats[i] };
     }
     random_data_generated = true;
 }
@@ -219,7 +225,7 @@ test "square tree" {
     ht.updateBounds();
     for (0..test_len) |i| {
         const query_body = random_balls[i];
-        const overlaps_found = ht.getOverlappingBodies(&overlap_buff, query_body);
+        const overlaps_found = try ht.getOverlappingBodies(&overlap_buff, query_body, true);
         if (overlaps_found.len == 1) { // self intersection
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[1]);
             continue;
