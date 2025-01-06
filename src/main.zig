@@ -50,9 +50,9 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     const tree_depth = 5;
-    const TreeType = tree.SquareTree(2, tree_depth, 1.0);
+    const TreeType = tree.SquareTree(2, tree_depth);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
-    var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 });
+    var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
     var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
     var overlap_count: u32 = 0;
@@ -76,8 +76,8 @@ fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     const tree_depth = 2;
-    const HexTree4 = tree.SquareTree(4, tree_depth, 1.0);
-    var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 });
+    const HexTree4 = tree.SquareTree(4, tree_depth);
+    var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
 
@@ -167,13 +167,13 @@ test "square tree" {
     defer deinitTesting();
     const base_num = 2;
     const tree_depth = 5;
-    const TreeType = tree.SquareTree(base_num, tree_depth, 1.0);
+    const TreeType = tree.SquareTree(base_num, tree_depth);
     TreeType.printTypeInfo();
-    var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 });
+    var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
     defer st.deinit();
 
     // check the random points are binned correctly
-    const leaf_size = TreeType.size_per_level[tree_depth - 1];
+    const leaf_size = st.size_per_level[tree_depth - 1];
     const max_dist_expected = 0.5 * @sqrt(2 * (leaf_size * leaf_size));
     var max_dist_found: f32 = 0.0;
     for (0..test_len) |i| {

@@ -30,7 +30,7 @@ fn getNodesAboveLevel(comptime base: u8, comptime depth: u8) [depth]usize {
     return nodes_above;
 }
 
-fn getSizePerLevel(comptime base: u8, comptime depth: u8, comptime size: f32) [depth]f32 {
+fn getSizePerLevel(comptime base: u8, comptime depth: u8, size: f32) [depth]f32 {
     var size_per_lvl: [depth]f32 = undefined;
     var last_size = size;
     inline for (0..depth) |d| {
@@ -40,7 +40,7 @@ fn getSizePerLevel(comptime base: u8, comptime depth: u8, comptime size: f32) [d
     return size_per_lvl;
 }
 
-fn getScalePerLevel(comptime base: u8, comptime depth: u8, comptime size: f32) [depth]f32 {
+fn getScalePerLevel(comptime base: u8, comptime depth: u8, size: f32) [depth]f32 {
     const size_per_lvl = getSizePerLevel(base, depth, size);
     var scale_per_lvl: [depth]f32 = undefined;
     inline for (0..depth) |i| scale_per_lvl[i] = 1.0 / size_per_lvl[i];
@@ -86,12 +86,16 @@ fn getShiftForBase(comptime base_num: u8) comptime_int {
 // TODO: there still seems to be a bug in getNodePoint - get this working properly!
 // TODO: check if having grid-size as a comptime parameter actually improves performance
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
-pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_size: f32) type {
+pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
+        size: f32,
+        size_per_level: [depth]f32,
+        scale_per_level: [depth]f32,
         bodies: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined,
         bounds: [depth][]Ball2f = undefined,
+        num_bodies: usize = 0,
 
         pub const NodeIndex = getMinimialIntegerForRange(num_leaves);
         pub const BodyIndex = struct {
@@ -104,15 +108,13 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
         pub const num_parents = nodes_above_level[depth - 1]; // the number of non-leaf nodes
         pub const num_nodes = num_parents + num_leaves; // total number of nodes
         pub const reverse_levels = getReversedRange(depth);
-        pub const size_per_level = getSizePerLevel(base, depth, square_size); // size of each square per level
-        pub const scale_per_level = getScalePerLevel(base, depth, square_size); // reciprocal of the above
         const base: NodeIndex = @intCast(base_number);
         const base_squared: NodeIndex = base * base;
         const level_bitshift = getShiftForBase(base_number);
 
         const Self = @This();
 
-        pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f) !Self {
+        pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
             if (depth < 2) @compileError("SquareTree depth must be greater than 1");
             var leaf_lists: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
             for (0..num_leaves) |i| {
@@ -127,6 +129,9 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
                 .bodies = leaf_lists,
                 .bounds = bballs,
                 .origin = origin,
+                .size = size,
+                .size_per_level = getSizePerLevel(base, depth, size),
+                .scale_per_level = getScalePerLevel(base, depth, size),
             };
         }
 
@@ -153,20 +158,19 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
 
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
-            std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, square_size });
+            std.debug.print("■ SquareTree({}, {}) info:\n", .{ base, depth });
             std.debug.print("   Index type: {} ({} bytes)\n", .{ @typeInfo(NodeIndex), @sizeOf(NodeIndex) });
             std.debug.print("   Number leaf nodes: {d}\n", .{num_leaves});
             std.debug.print("   Total nodes: {d}\n", .{num_nodes});
             std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
             std.debug.print("   Nodes above level: {any}\n", .{nodes_above_level});
-            std.debug.print("   Size per level: {any}\n", .{size_per_level});
             std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
         }
 
         /// Returns true if the specified point is within the region indexed by this tree, false otherwise.
         pub fn isPointWithinRegion(self: Self, point: Vec2f) bool {
             const d = point - self.origin;
-            return 0 <= d[0] and d[0] < square_size and 0 <= d[1] and d[1] < square_size;
+            return 0 <= d[0] and d[0] < self.size and 0 <= d[1] and d[1] < self.size;
         }
 
         /// Gets the index of the leaf node the query point lies within.
@@ -175,8 +179,8 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             const d = point - self.origin;
             var index: NodeIndex = 0;
             for (0..depth) |lvl| {
-                const row = @as(NodeIndex, @intFromFloat(scale_per_level[lvl] * d[1])) % base;
-                const col = @as(NodeIndex, @intFromFloat(scale_per_level[lvl] * d[0])) % base;
+                const row = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[1])) % base;
+                const col = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[0])) % base;
                 index = (index << @truncate(level_bitshift)) + row * base + col;
             }
             return index;
@@ -189,14 +193,14 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
                 const row = index / base;
                 const col = index % base;
                 return Vec2f{
-                    size_per_level[0] * (x_offset + core.asf32(col)),
-                    size_per_level[0] * (y_offset + core.asf32(row)),
+                    self.size_per_level[0] * (x_offset + core.asf32(col)),
+                    self.size_per_level[0] * (y_offset + core.asf32(row)),
                 };
             }
             for (0..level + 1) |lvl| {
                 // NOTE: This is probably quite slow in practice due to integer divisions.
                 const lvl_index = getPredeccessorIndex(index, @intCast(lvl));
-                const lvl_size = size_per_level[lvl];
+                const lvl_size = self.size_per_level[lvl];
                 const row = (lvl_index / base) % base;
                 const col = lvl_index % base;
                 const x_lvl = if (lvl < level) core.asf32(col) else x_offset + core.asf32(col);
@@ -282,12 +286,24 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
         pub fn addBody(self: *Self, ball: Ball2f) !BodyIndex {
             const leaf_index = self.getLeafIndexForPoint(ball.centre);
             const body_num = self.bodies[leaf_index].items.len;
-            // TODO: add the body to a neighbouring leaf if this leaf has reached capacity
+            // TODO: add the body to a neighbouring leaf if this leaf has reached capacity?
             try self.bodies[leaf_index].append(self.allocator, ball);
+            self.num_bodies += 1;
             return BodyIndex{ .leaf_index = leaf_index, .body_number = @intCast(body_num) };
         }
 
-        pub fn removeBody() void {}
+        pub fn getBody(self: Self, body_index: BodyIndex) Ball2f {
+            return self.bodies[body_index.leaf_index].items[body_index.body_number];
+        }
+
+        // IDEA: The below will invalidate indexing, which is inconvenient.
+        //       We could prevent this by swapping with an empty ball maybe?
+        //       Add will need to be updated to search for the first empty position, but that should be OK.
+        pub fn removeBody(self: *Self, body_index: BodyIndex) Ball2f {
+            const b = self.bodies[body_index.leaf_index].swapRemove(body_index.body_number);
+            self.num_bodies -= 1;
+            return b;
+        }
     };
 }
 
@@ -295,19 +311,19 @@ const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
-    const Tree2x8 = SquareTree(2, 8, 2000.0);
-    var qt = Tree2x8{ .allocator = std.testing.allocator, .origin = Vec2f{ 0, 0 } };
+    const Tree2x8 = SquareTree(2, 8);
+    var qt = try Tree2x8.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
 
-    const Tree4x4 = SquareTree(4, 4, 2000.0);
-    var ht = Tree4x4{ .allocator = std.testing.allocator, .origin = Vec2f{ 0, 0 } };
+    const Tree4x4 = SquareTree(4, 4);
+    var ht = try Tree4x4.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
 }
 
 test "quad tree indexing" {
     const tree_depth = 3;
-    const QuadTree4 = SquareTree(2, tree_depth, 8.0);
-    var qt = try QuadTree4.init(testing.allocator, 0, Vec2f{ 0, 0 });
+    const QuadTree4 = SquareTree(2, tree_depth);
+    var qt = try QuadTree4.init(testing.allocator, 0, Vec2f{ 0, 0 }, 8.0);
     defer qt.deinit();
 
     const pt_check_1 = qt.isPointWithinRegion(Vec2f{ 0, 0 });
@@ -338,8 +354,8 @@ test "quad tree indexing" {
 
 test "hex tree indexing" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth, 8.0);
-    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
+    const HexTree2 = SquareTree(4, tree_depth);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 8.0);
     defer tree.deinit();
 
     const pt_check_1 = tree.isPointWithinRegion(Vec2f{ 0, 0 });
@@ -369,8 +385,8 @@ test "hex tree indexing" {
 
 test "hex tree overlap" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth, 1.0);
-    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 });
+    const HexTree2 = SquareTree(4, tree_depth);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 1.0);
     defer tree.deinit();
 
     const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
@@ -396,4 +412,30 @@ test "hex tree overlap" {
     const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
     const overlap_3_bfs = try tree.getOverlappingBodies(&index_buff, query_region_3);
     try testing.expectEqual(3, overlap_3_bfs.len);
+}
+
+test "square tree add remove" {
+    const QuadTree = SquareTree(2, 4);
+    var qt = try QuadTree.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
+    defer qt.deinit();
+
+    const test_bodies = [_]Ball2f{
+        Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 },
+        Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 },
+        Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 },
+    };
+
+    var indexes: [3]QuadTree.BodyIndex = undefined;
+    for (test_bodies, 0..) |b, i| indexes[i] = try qt.addBody(b);
+    try testing.expectEqual(3, qt.num_bodies);
+
+    for (indexes, 0..) |b_index, i| {
+        const get_body = qt.getBody(b_index);
+        const removed_body = qt.removeBody(b_index);
+        try testing.expectEqual(test_bodies[i].centre, get_body.centre);
+        try testing.expectEqual(test_bodies[i].radius, get_body.radius);
+        try testing.expectEqual(test_bodies[i].centre, removed_body.centre);
+        try testing.expectEqual(test_bodies[i].radius, removed_body.radius);
+    }
+    try testing.expectEqual(0, qt.num_bodies);
 }
