@@ -1,6 +1,5 @@
 const std = @import("std");
 const core = @import("core.zig");
-
 const Vec2f = core.Vec2f;
 const Vec4f = core.Vec4f;
 const Vec8f = core.Vec8f;
@@ -247,91 +246,37 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime square_
             }
         }
 
-        // NOTE: This seems to be marginly better than BFS in a few cases, but vastly worse in most.
-        //       Might not be worth keeping it around in the long term (do more testing!).
-        fn searchOverlapsDepthFirst(
-            self: Self,
-            buff: []BodyIndex,
-            query_ball: Ball2f,
-            level: u8,
-            level_index: NodeIndex,
-        ) []BodyIndex {
+        pub fn getOverlappingBodies(self: Self, buff: []BodyIndex, query_ball: Ball2f) ![]BodyIndex {
+            var search_buff: [num_leaves]NodeIndex = undefined;
+            for (0..base_squared) |i| search_buff[i] = @intCast(i);
+            var search_len: usize = @intCast(base_squared);
+            var next_buff: [num_leaves]NodeIndex = undefined;
+            var next_len: usize = 0;
+            // iterate through all parent nodes
+            for (0..depth - 1) |lvl| {
+                for (search_buff[0..search_len]) |i| {
+                    if (query_ball.overlapsBall(self.bounds[lvl][i])) {
+                        next_len += getChildIndexes(next_buff[next_len..], i).len;
+                    }
+                }
+                @memcpy(search_buff[0..next_len], next_buff[0..next_len]);
+                search_len = next_len;
+                next_len = 0;
+            }
+            // iterate through leaf nodes
             var buff_index: usize = 0;
-            if (level == depth - 1) { // leaf node
-                for (self.bodies[level_index].items, 0..) |a, i| {
-                    if (a.overlapsBall(query_ball)) {
+            for (search_buff[0..search_len]) |leaf_index| {
+                for (self.bodies[leaf_index].items, 0..) |b, i| {
+                    if (query_ball.overlapsBall(b)) {
                         buff[buff_index] = BodyIndex{
-                            .leaf_index = level_index,
+                            .leaf_index = leaf_index,
                             .body_number = @intCast(i),
                         };
                         buff_index += 1;
                     }
                 }
-            } else { // parent node
-                var child_index_buff: [base_squared]NodeIndex = undefined;
-                const child_indexes = getChildIndexes(&child_index_buff, level_index);
-                for (child_indexes) |i| {
-                    if (self.bounds[level + 1][i].overlapsBall(query_ball)) {
-                        const overlaps = searchOverlapsDepthFirst(self, buff[buff_index..], query_ball, level + 1, i);
-                        buff_index += overlaps.len;
-                    }
-                }
             }
             return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
-        }
-
-        fn searchOverlapsBreadthFirst(
-            self: Self,
-            buff: []BodyIndex,
-            query_ball: Ball2f,
-            search_lvl: u8,
-            search_indexes: []const NodeIndex,
-        ) []BodyIndex {
-            if (search_lvl == depth - 1) { // leaf node
-                var buff_index: usize = 0;
-                for (search_indexes) |leaf_index| {
-                    for (self.bodies[leaf_index].items, 0..) |b, i| {
-                        if (query_ball.overlapsBall(b)) {
-                            buff[buff_index] = BodyIndex{
-                                .leaf_index = leaf_index,
-                                .body_number = @intCast(i),
-                            };
-                            buff_index += 1;
-                        }
-                    }
-                }
-                return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
-            } else { // parent node
-                var next_buff: [num_leaves]NodeIndex = undefined;
-                var next_index: usize = 0;
-                for (search_indexes) |i| {
-                    if (query_ball.overlapsBall(self.bounds[search_lvl][i])) {
-                        next_index += getChildIndexes(next_buff[next_index..], i).len;
-                    }
-                }
-                return self.searchOverlapsBreadthFirst(
-                    buff,
-                    query_ball,
-                    search_lvl + 1,
-                    next_buff[0..next_index],
-                );
-            }
-        }
-
-        pub fn getOverlappingBodies(self: Self, buff: []BodyIndex, query_ball: Ball2f, breadth_first: bool) ![]BodyIndex {
-            // TODO: should this function return an error in some cases?
-            if (breadth_first) {
-                var search_indexes: [base_squared]NodeIndex = undefined;
-                for (0..base_squared) |i| search_indexes[i] = @intCast(i);
-                return self.searchOverlapsBreadthFirst(buff, query_ball, 0, &search_indexes);
-            } else {
-                var buff_index: usize = 0;
-                for (0..nodes_in_level[0]) |n| {
-                    const overlaps = self.searchOverlapsDepthFirst(buff[buff_index..], query_ball, 0, @intCast(n));
-                    buff_index += overlaps.len;
-                }
-                return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
-            }
         }
 
         pub fn addBody(self: *Self, ball: Ball2f) !BodyIndex {
@@ -438,22 +383,17 @@ test "hex tree overlap" {
 
     var index_buff: [8]HexTree2.BodyIndex = undefined;
     const query_region_1 = Ball2f{ .centre = Vec2f{ 0.9, 0.5 }, .radius = 0.1 };
-    const overlap_indexes_1 = try tree.getOverlappingBodies(&index_buff, query_region_1, true);
+    const overlap_indexes_1 = try tree.getOverlappingBodies(&index_buff, query_region_1);
     try testing.expectEqual(0, overlap_indexes_1.len);
     try testing.expectEqual(false, index_a.leaf_index == index_b.leaf_index);
     try testing.expectEqual(false, index_a.leaf_index == index_c.leaf_index);
     try testing.expectEqual(false, index_b.leaf_index == index_c.leaf_index);
 
     const query_region_2 = Ball2f{ .centre = Vec2f{ -3.5, -3.5 }, .radius = 1.0 };
-    const overlap_indexes_2 = try tree.getOverlappingBodies(&index_buff, query_region_2, true);
+    const overlap_indexes_2 = try tree.getOverlappingBodies(&index_buff, query_region_2);
     try testing.expectEqual(0, overlap_indexes_2.len);
 
     const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
-    const overlap_3_bfs = try tree.getOverlappingBodies(&index_buff, query_region_3, true);
-    const overlap_3_dfs = try tree.getOverlappingBodies(&index_buff, query_region_3, false);
+    const overlap_3_bfs = try tree.getOverlappingBodies(&index_buff, query_region_3);
     try testing.expectEqual(3, overlap_3_bfs.len);
-    try testing.expectEqual(3, overlap_3_dfs.len);
-    for (0..overlap_3_bfs.len) |i| {
-        try testing.expectEqual(overlap_3_bfs[i], overlap_3_dfs[i]);
-    }
 }

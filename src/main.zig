@@ -17,7 +17,7 @@ const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 const Box2f = core.Box2f;
 const benchmark_len = 10000;
-const test_len = 400;
+const test_len = 100;
 
 var num_trials: u16 = 10;
 var random_floats: [benchmark_len]f32 = undefined;
@@ -49,14 +49,13 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
-    const tree_depth = 4;
+    const tree_depth = 5;
     const TreeType = tree.SquareTree(2, tree_depth, 1.0);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 });
     defer qt.deinit();
     var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
-    var overlap_count_1: u32 = 0;
-    var overlap_count_2: u32 = 0;
+    var overlap_count: u32 = 0;
 
     const t_0 = time.microTimestamp();
     for (random_balls) |ball| _ = try qt.addBody(ball);
@@ -64,19 +63,14 @@ fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     qt.updateBounds();
     const t_2 = time.microTimestamp();
     for (random_balls) |b| {
-        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b, false);
-        overlap_count_1 += @truncate(overlaps_found.len);
+        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b);
+        overlap_count += @truncate(overlaps_found.len);
     }
     const t_3 = time.microTimestamp();
-    for (random_balls) |b| {
-        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b, true);
-        overlap_count_2 += @truncate(overlaps_found.len);
-    }
-    const t_4 = time.microTimestamp();
 
     std.debug.print(
-        "Overlap benchmark: found {}/{} overlaps. Add took {} us, update took {} us, overlap checks took {}/{} us.\n",
-        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1, t_3 - t_2, t_4 - t_3 },
+        "Overlap benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
+        .{ overlap_count, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
     );
 }
 
@@ -171,12 +165,12 @@ test "encompassing balls" {
 test "square tree" {
     try initTesting(false);
     defer deinitTesting();
-    const base_num = 4;
-    const tree_depth = 2;
+    const base_num = 2;
+    const tree_depth = 5;
     const TreeType = tree.SquareTree(base_num, tree_depth, 1.0);
     TreeType.printTypeInfo();
-    var ht = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 });
-    defer ht.deinit();
+    var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 });
+    defer st.deinit();
 
     // check the random points are binned correctly
     const leaf_size = TreeType.size_per_level[tree_depth - 1];
@@ -184,8 +178,8 @@ test "square tree" {
     var max_dist_found: f32 = 0.0;
     for (0..test_len) |i| {
         const point = random_vecs[i];
-        const index = ht.getLeafIndexForPoint(point);
-        const centre = ht.getNodeCentre(tree_depth - 1, index);
+        const index = st.getLeafIndexForPoint(point);
+        const centre = st.getNodeCentre(tree_depth - 1, index);
         const dist = core.norm(point - centre);
         if (dist > max_dist_expected) {
             std.debug.print(
@@ -210,9 +204,9 @@ test "square tree" {
         const lvl_end_index = TreeType.nodes_in_level[lvl];
         for (0..lvl_end_index) |i| {
             const index: TreeType.NodeIndex = @intCast(i);
-            const node_origin = ht.getNodeOrigin(lvl, index);
-            const node_centre = ht.getNodeCentre(lvl, index);
-            const node_corner = ht.getNodeCorner(lvl, index);
+            const node_origin = st.getNodeOrigin(lvl, index);
+            const node_centre = st.getNodeCentre(lvl, index);
+            const node_corner = st.getNodeCorner(lvl, index);
             const node_label = try std.fmt.bufPrint(&text_buff, "{X}", .{index});
             try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
             try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
@@ -221,18 +215,18 @@ test "square tree" {
     // find the overlapping bodies and add them to the image
     var overlap_buff: [benchmark_len / 8]TreeType.BodyIndex = undefined;
     var overlap_count: u32 = 0;
-    for (0..test_len) |i| _ = try ht.addBody(random_balls[i]);
-    ht.updateBounds();
+    for (0..test_len) |i| _ = try st.addBody(random_balls[i]);
+    st.updateBounds();
     for (0..test_len) |i| {
         const query_body = random_balls[i];
-        const overlaps_found = try ht.getOverlappingBodies(&overlap_buff, query_body, true);
+        const overlaps_found = try st.getOverlappingBodies(&overlap_buff, query_body);
         if (overlaps_found.len == 1) { // self intersection
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[1]);
             continue;
         }
         // draw all overlaps in a different colour
         for (overlaps_found) |overlap_index| {
-            const overlap_body = ht.bodies[overlap_index.leaf_index].items[overlap_index.body_number];
+            const overlap_body = st.bodies[overlap_index.leaf_index].items[overlap_index.body_number];
             if (@reduce(.And, (overlap_body.centre == query_body.centre))) continue; // assumed to be the same body
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[6]);
             try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[6]);
