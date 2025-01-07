@@ -78,7 +78,7 @@ fn getShiftForBase(comptime base_num: u8) comptime_int {
         8 => return @as(u3, 6),
         16 => return @as(u4, 8),
         else => {
-            @compileError("unsupported base number");
+            @compileError("Unsupported base number (must be a power of two)");
         },
     }
 }
@@ -140,7 +140,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
             for (0..depth) |lvl| self.allocator.free(self.bounds[lvl]);
         }
 
-        /// Converts a leaf index to the of its predecessor at the specified level
+        /// Converts a leaf node index to the index of its predecessor at the specified level
         inline fn getPredeccessorIndex(leaf_index: NodeIndex, pred_level: u8) NodeIndex {
             const lvl_diff = depth - pred_level - 1;
             return leaf_index >> @truncate(lvl_diff * level_bitshift);
@@ -187,41 +187,34 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
         }
 
         /// Gets the position of a point offset from the identified node's origin
-        pub fn getNodePoint(self: Self, level: u8, index: NodeIndex, x_offset: f32, y_offset: f32) Vec2f {
+        /// NOTE: This is probably quite slow in practice due to integer divisions (don't use in performance critical code!).
+        pub fn getNodePoint(self: Self, level: u8, index: NodeIndex, x_offset: f32, y_offset: f32) !Vec2f {
             var point = self.origin;
-            if (level == 0) {
-                const row = index / base;
-                const col = index % base;
-                return Vec2f{
-                    self.size_per_level[0] * (x_offset + core.asf32(col)),
-                    self.size_per_level[0] * (y_offset + core.asf32(row)),
-                };
-            }
             for (0..level + 1) |lvl| {
-                // NOTE: This is probably quite slow in practice due to integer divisions.
-                const lvl_index = getPredeccessorIndex(index, @intCast(lvl));
+                const lvl_index = getPredeccessorIndex(index, @intCast(lvl)); //% lvl_divisor;
                 const lvl_size = self.size_per_level[lvl];
                 const row = (lvl_index / base) % base;
                 const col = lvl_index % base;
                 const x_lvl = if (lvl < level) core.asf32(col) else x_offset + core.asf32(col);
                 const y_lvl = if (lvl < level) core.asf32(row) else y_offset + core.asf32(row);
+                // TODO: seems to be bugged on non-leaf nodes: figure out why
                 point += Vec2f{ lvl_size * x_lvl, lvl_size * y_lvl };
             }
             return point;
         }
 
         /// Gets the origin point for the identified node.
-        pub fn getNodeOrigin(self: Self, level: u8, index: NodeIndex) Vec2f {
+        pub fn getNodeOrigin(self: Self, level: u8, index: NodeIndex) !Vec2f {
             return self.getNodePoint(level, index, 0.0, 0.0);
         }
 
         /// Gets the centre point of the identified node.
-        pub fn getNodeCentre(self: Self, level: u8, index: NodeIndex) Vec2f {
+        pub fn getNodeCentre(self: Self, level: u8, index: NodeIndex) !Vec2f {
             return self.getNodePoint(level, index, 0.5, 0.5);
         }
 
         /// Gets the corner opposite the origin for the identified node.
-        pub fn getNodeCorner(self: Self, level: u8, index: NodeIndex) Vec2f {
+        pub fn getNodeCorner(self: Self, level: u8, index: NodeIndex) !Vec2f {
             return self.getNodePoint(level, index, 1.0, 1.0);
         }
 
@@ -347,8 +340,12 @@ test "quad tree indexing" {
     const ln_num_b = qt.getLeafIndexForPoint(pt_b);
     try testing.expectEqual(QuadTree4.num_leaves - 1, ln_num_b);
     for (0..QuadTree4.num_leaves) |n| {
-        const ln_num = QuadTree4.getPredeccessorIndex(@intCast(n), 0);
-        try testing.expectEqual(n / 16, ln_num);
+        const pred_0 = QuadTree4.getPredeccessorIndex(@intCast(n), 0);
+        const pred_1 = QuadTree4.getPredeccessorIndex(@intCast(n), 1);
+        const pred_2 = QuadTree4.getPredeccessorIndex(@intCast(n), 2);
+        try testing.expectEqual(n / 16, pred_0);
+        try testing.expectEqual(n / 4, pred_1);
+        try testing.expectEqual(n, pred_2);
     }
 }
 

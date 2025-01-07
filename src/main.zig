@@ -165,8 +165,8 @@ test "encompassing balls" {
 test "square tree" {
     try initTesting(false);
     defer deinitTesting();
-    const base_num = 2;
-    const tree_depth = 5;
+    const base_num = 4;
+    const tree_depth = 2;
     const TreeType = tree.SquareTree(base_num, tree_depth);
     TreeType.printTypeInfo();
     var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
@@ -179,7 +179,7 @@ test "square tree" {
     for (0..test_len) |i| {
         const point = random_vecs[i];
         const index = st.getLeafIndexForPoint(point);
-        const centre = st.getNodeCentre(tree_depth - 1, index);
+        const centre = try st.getNodeCentre(tree_depth - 1, index);
         const dist = core.norm(point - centre);
         if (dist > max_dist_expected) {
             std.debug.print(
@@ -204,9 +204,9 @@ test "square tree" {
         const lvl_end_index = TreeType.nodes_in_level[lvl];
         for (0..lvl_end_index) |i| {
             const index: TreeType.NodeIndex = @intCast(i);
-            const node_origin = st.getNodeOrigin(lvl, index);
-            const node_centre = st.getNodeCentre(lvl, index);
-            const node_corner = st.getNodeCorner(lvl, index);
+            const node_origin = try st.getNodeOrigin(lvl, index);
+            const node_centre = try st.getNodeCentre(lvl, index);
+            const node_corner = try st.getNodeCorner(lvl, index);
             const node_label = try std.fmt.bufPrint(&text_buff, "{X}", .{index});
             try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
             try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
@@ -227,7 +227,7 @@ test "square tree" {
         // draw all overlaps in a different colour
         for (overlaps_found) |overlap_index| {
             const overlap_body = st.bodies[overlap_index.leaf_index].items[overlap_index.body_number];
-            if (@reduce(.And, (overlap_body.centre == query_body.centre))) continue; // assumed to be the same body
+            if (@reduce(.And, overlap_body.centre == query_body.centre)) continue; // assumed to be the same body
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[6]);
             try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[6]);
         }
