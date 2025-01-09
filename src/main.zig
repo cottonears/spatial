@@ -1,6 +1,6 @@
 const std = @import("std");
 const core = @import("core.zig");
-const tree = @import("tree.zig");
+const data = @import("data.zig");
 const svg = @import("svg.zig");
 const fmt = std.fmt;
 const fs = std.fs;
@@ -17,7 +17,7 @@ const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 const Box2f = core.Box2f;
 const benchmark_len = 10000;
-const test_len = 100;
+const test_len = 300;
 
 var num_trials: u16 = 10;
 var random_floats: [benchmark_len]f32 = undefined;
@@ -50,7 +50,7 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 
 fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     const tree_depth = 5;
-    const TreeType = tree.SquareTree(2, tree_depth);
+    const TreeType = data.SquareTree(2, tree_depth);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
@@ -76,7 +76,7 @@ fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     const tree_depth = 2;
-    const HexTree4 = tree.SquareTree(4, tree_depth);
+    const HexTree4 = data.SquareTree(4, tree_depth);
     var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
@@ -100,7 +100,7 @@ fn genRandomData() void {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
-        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.001 * random_floats[i] };
+        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.01 * random_floats[i] };
     }
     random_data_generated = true;
 }
@@ -120,6 +120,12 @@ var test_canvas: svg.Canvas = undefined;
 fn initTesting(delete_out_dir: bool) !void {
     if (!random_data_generated) { // generate random data for tests
         genRandomData();
+        var palette = try svg.RandomHslPalette.init(std.testing.allocator, palette_size);
+        for (0.., palette.hsl_colours) |i, hsl| {
+            dashed_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl, .stroke_dashed = true };
+            solid_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl };
+        }
+        palette.deinit();
     }
     if (delete_out_dir) { // delete test-out and create a new copy
         var cwd = fs.cwd();
@@ -129,12 +135,6 @@ fn initTesting(delete_out_dir: bool) !void {
     }
     // always set up a canvas for drawing images on
     test_canvas = try svg.Canvas.init(std.testing.allocator, canvas_width, canvas_height, canvas_scale);
-    var palette = try svg.RandomHslPalette.init(std.testing.allocator, palette_size);
-    for (0.., palette.hsl_colours) |i, hsl| {
-        dashed_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl, .stroke_dashed = true };
-        solid_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl };
-    }
-    palette.deinit();
 }
 
 fn deinitTesting() void {
@@ -162,12 +162,23 @@ test "encompassing balls" {
     }
 }
 
+fn getNodeLabel(buff: []u8, lvl: u8, index: u32) ![]const u8 {
+    return switch (lvl) {
+        0 => try std.fmt.bufPrint(buff, "{X:0>1}", .{index}),
+        1 => try std.fmt.bufPrint(buff, "{X:0>2}", .{index}),
+        2 => try std.fmt.bufPrint(buff, "{X:0>3}", .{index}),
+        3 => try std.fmt.bufPrint(buff, "{X:0>4}", .{index}),
+        4 => try std.fmt.bufPrint(buff, "{X:0>5}", .{index}),
+        else => unreachable,
+    };
+}
+
 test "square tree" {
     try initTesting(false);
     defer deinitTesting();
     const base_num = 4;
     const tree_depth = 2;
-    const TreeType = tree.SquareTree(base_num, tree_depth);
+    const TreeType = data.SquareTree(base_num, tree_depth);
     TreeType.printTypeInfo();
     var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
     defer st.deinit();
@@ -198,16 +209,16 @@ test "square tree" {
     // create an svg image depicting the grid structure of the tree
     var text_buff: [16]u8 = undefined;
     for (TreeType.reverse_levels) |lvl| {
-        var style = solid_styles[(2 * lvl) % tree_depth];
+        var style = solid_styles[(2 * lvl) % palette_size];
         style.stroke_width = @truncate(tree_depth - lvl);
-        const font_size: u8 = 9 + 3 * (tree_depth - lvl);
+        const font_size: u8 = 12 + 12 * (tree_depth - lvl);
         const lvl_end_index = TreeType.nodes_in_level[lvl];
         for (0..lvl_end_index) |i| {
             const index: TreeType.NodeIndex = @intCast(i);
             const node_origin = try st.getNodeOrigin(lvl, index);
             const node_centre = try st.getNodeCentre(lvl, index);
             const node_corner = try st.getNodeCorner(lvl, index);
-            const node_label = try std.fmt.bufPrint(&text_buff, "{X}", .{index});
+            const node_label = try getNodeLabel(&text_buff, lvl, index);
             try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
             try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
         }
@@ -221,15 +232,15 @@ test "square tree" {
         const query_body = random_balls[i];
         const overlaps_found = try st.getOverlappingBodies(&overlap_buff, query_body);
         if (overlaps_found.len == 1) { // self intersection
-            try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[1]);
+            try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[7]);
             continue;
         }
         // draw all overlaps in a different colour
         for (overlaps_found) |overlap_index| {
             const overlap_body = st.bodies[overlap_index.leaf_index].items[overlap_index.body_number];
             if (@reduce(.And, overlap_body.centre == query_body.centre)) continue; // assumed to be the same body
-            try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[6]);
-            try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[6]);
+            try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[5]);
+            try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[5]);
         }
         overlap_count += @truncate(overlaps_found.len);
     }

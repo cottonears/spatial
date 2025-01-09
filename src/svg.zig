@@ -241,11 +241,11 @@ pub const RandomHslPalette = struct {
     /// The colours will be evenly spaced within the hue range, but have the same lightness + saturation.
     pub fn fillWithRandomColours(self: *Self, col_slice: [][3]u9) void {
         const hue_range = self.h_max - self.h_min;
+        const hue_inc: u9 = @truncate(hue_range / col_slice.len);
         var col = self.getRandomColour();
         for (0..col_slice.len) |i| {
-            const hue_inc = @as(u9, @intCast(i *% hue_range / col_slice.len));
-            col[0] = self.h_min + (col[0] +% hue_inc) % hue_range;
             col_slice[i] = col;
+            col[0] = (col[0] + hue_inc) % self.h_max;
         }
     }
 };
