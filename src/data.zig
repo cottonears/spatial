@@ -6,53 +6,36 @@ const Vec8f = core.Vec8f;
 const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 
-/// Raises a number to the power of (2 * n). Can be used at comptime.
+/// Raises a number to the power of (2 * n).
 fn pow2n(comptime base: u8, comptime n: u8) usize {
     var s: usize = 1;
     inline for (0..n) |_| s = s * base * base;
     return s;
 }
 
-fn getNodesPerLevel(comptime base: u8, comptime depth: u8) [depth]usize {
-    var npl: [depth]usize = undefined;
-    inline for (0..depth) |d| npl[d] = pow2n(base, 1 + @as(u32, @intCast(d)));
-    return npl;
-}
-
-fn getNodesAboveLevel(comptime base: u8, comptime depth: u8) [depth]usize {
-    const npl = getNodesPerLevel(base, depth);
-    var nodes_above: [depth]usize = undefined;
-    var sum: usize = 0;
-    inline for (0..depth) |d| {
-        nodes_above[d] = sum;
-        sum += npl[d];
+/// Gets the sequence S := { x ^ (2 * n) | n in {n_start, ..., n_end - 1} }.
+/// If make_pow0_zero is true, x ^ 0 is replaced with 0.
+fn getPow2nSequence(
+    comptime base: u8,
+    comptime n_start: u8,
+    comptime n_end: u8,
+    comptime make_pow0_zero: bool,
+) [n_end - n_start]usize {
+    var seq: [n_end - n_start]usize = undefined;
+    inline for (n_start..n_end, 0..) |n, i| {
+        seq[i] = if (make_pow0_zero and n == 0) 0 else pow2n(base, n);
     }
-    return nodes_above;
+    return seq;
 }
 
-fn getSizePerLevel(comptime base: u8, comptime depth: u8, size: f32) [depth]f32 {
-    var size_per_lvl: [depth]f32 = undefined;
-    var last_size = size;
-    inline for (0..depth) |d| {
-        size_per_lvl[d] = last_size / base;
-        last_size = last_size / base;
-    }
-    return size_per_lvl;
-}
-
-fn getScalePerLevel(comptime base: u8, comptime depth: u8, size: f32) [depth]f32 {
-    const size_per_lvl = getSizePerLevel(base, depth, size);
-    var scale_per_lvl: [depth]f32 = undefined;
-    inline for (0..depth) |i| scale_per_lvl[i] = 1.0 / size_per_lvl[i];
-    return scale_per_lvl;
-}
-
-fn getReversedRange(comptime len: u8) [len]u8 {
-    var range: [len]u8 = undefined;
+/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
+fn getReversedRange(comptime T: type, comptime len: T) [len]T {
+    var range: [len]T = undefined;
     inline for (0..len) |i| range[i] = len - i - 1;
     return range;
 }
 
+/// Returns log2(len) for values of len that are supported by the SquareTree struct.
 fn getMinimialIntegerForRange(comptime len: u32) type {
     switch (len) {
         4 => return u2,
@@ -67,10 +50,11 @@ fn getMinimialIntegerForRange(comptime len: u32) type {
         1048576 => return u20,
         4194304 => return u22,
         16777216 => return u24,
-        else => unreachable,
+        else => unreachable, // unsupported
     }
 }
 
+/// Gets a 'shift-amount' that can be used to mutiply/divide by (base * base) using a bit-shift.
 fn getShiftForBase(comptime base_num: u8) comptime_int {
     switch (base_num) {
         2 => return @as(u2, 2),
@@ -78,13 +62,11 @@ fn getShiftForBase(comptime base_num: u8) comptime_int {
         8 => return @as(u3, 6),
         16 => return @as(u4, 8),
         else => {
-            @compileError("Unsupported base number (must be a power of two)");
+            @compileError("Unsupported base number (must be a small power of two)");
         },
     }
 }
 
-// TODO: there still seems to be a bug in getNodePoint - get this working properly!
-// TODO: check if having grid-size as a comptime parameter actually improves performance
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
     return struct {
@@ -102,12 +84,12 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
             leaf_index: NodeIndex,
             body_number: u16, // TODO: make this type a comptime parameter
         };
-        pub const nodes_in_level = getNodesPerLevel(base_number, depth); // the number of nodes in each level
-        pub const nodes_above_level = getNodesAboveLevel(base_number, depth); // cumulative number of nodes above each level
+        pub const nodes_in_level = getPow2nSequence(base_number, 1, depth + 1, false); // the number of nodes in each level
+        pub const nodes_above_level = getPow2nSequence(base_number, 0, depth, true); // cumulative number of nodes above each level
         pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
         pub const num_parents = nodes_above_level[depth - 1]; // the number of non-leaf nodes
         pub const num_nodes = num_parents + num_leaves; // total number of nodes
-        pub const reverse_levels = getReversedRange(depth);
+        pub const reverse_levels = getReversedRange(u8, depth);
         const base: NodeIndex = @intCast(base_number);
         const base_squared: NodeIndex = base * base;
         const level_bitshift = getShiftForBase(base_number);
@@ -115,23 +97,32 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
         const Self = @This();
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
-            if (depth < 2) @compileError("SquareTree depth must be greater than 1");
+            if (depth < 2) {
+                @compileError("SquareTree depth must be greater than 1");
+            }
             var leaf_lists: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
             for (0..num_leaves) |i| {
                 leaf_lists[i] = try std.ArrayListUnmanaged(Ball2f).initCapacity(allocator, leaf_capacity);
             }
             var bballs: [depth][]Ball2f = undefined;
+            var size_per_lvl: [depth]f32 = undefined;
+            var scale_per_lvl: [depth]f32 = undefined;
+            var last_size = size;
             for (0..depth) |lvl| {
                 bballs[lvl] = try allocator.alloc(Ball2f, nodes_in_level[lvl]);
+                size_per_lvl[lvl] = last_size / base;
+                scale_per_lvl[lvl] = 1.0 / size_per_lvl[lvl];
+                last_size = last_size / base;
             }
+
             return Self{
                 .allocator = allocator,
                 .bodies = leaf_lists,
                 .bounds = bballs,
                 .origin = origin,
                 .size = size,
-                .size_per_level = getSizePerLevel(base, depth, size),
-                .scale_per_level = getScalePerLevel(base, depth, size),
+                .size_per_level = size_per_lvl,
+                .scale_per_level = scale_per_lvl,
             };
         }
 
