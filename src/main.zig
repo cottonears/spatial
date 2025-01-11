@@ -44,13 +44,14 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
     genRandomData();
     std.debug.print("Running all benchmarks for {} bodies...\n", .{benchmark_len});
     try benchmarkIndexing(allocator);
-    try benchmarkOverlap(allocator);
+    try benchmarkBallsOverlap(allocator);
+    benchmarkIntervalsOverlap();
     std.debug.print("Benchmarks complete!\n", .{});
 }
 
-fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
+fn benchmarkBallsOverlap(allocator: std.mem.Allocator) !void {
     const tree_depth = 5;
-    const TreeType = data.SquareTree(2, tree_depth);
+    const TreeType = data.SquareTree(2, tree_depth, u6);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
@@ -69,14 +70,44 @@ fn benchmarkOverlap(allocator: std.mem.Allocator) !void {
     const t_3 = time.microTimestamp();
 
     std.debug.print(
-        "Overlap benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
+        "Overlapping balls benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
         .{ overlap_count, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
+    );
+}
+
+fn benchmarkIntervalsOverlap() void {
+    var overlap_count_1: u32 = 0;
+    var overlap_count_2: u32 = 0;
+    const t_0 = time.microTimestamp();
+    for (random_balls) |b| {
+        const intervals_overlap = core.intervalsOverlap(
+            b.centre[0] - b.radius,
+            b.centre[0] + b.radius,
+            b.centre[1] - b.radius,
+            b.centre[1] + b.radius,
+        );
+        overlap_count_1 += if (intervals_overlap) 1 else 0;
+    }
+    const t_1 = time.microTimestamp();
+    for (random_balls) |b| {
+        const intervals_overlap = core.intervalsOverlap(
+            b.centre[0],
+            b.radius,
+            b.centre[1],
+            b.radius,
+        );
+        overlap_count_2 += if (intervals_overlap) 1 else 0;
+    }
+    const t_2 = time.microTimestamp();
+    std.debug.print(
+        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 took {} us; method 2 took {} us.\n",
+        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1 },
     );
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     const tree_depth = 2;
-    const HexTree4 = data.SquareTree(4, tree_depth);
+    const HexTree4 = data.SquareTree(4, tree_depth, u8);
     var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
@@ -178,7 +209,7 @@ test "square tree" {
     defer deinitTesting();
     const base_num = 4;
     const tree_depth = 2;
-    const TreeType = data.SquareTree(base_num, tree_depth);
+    const TreeType = data.SquareTree(base_num, tree_depth, u16);
     TreeType.printTypeInfo();
     var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
     defer st.deinit();

@@ -13,7 +13,7 @@ fn pow2n(comptime base: u8, comptime n: u8) usize {
     return s;
 }
 
-/// Gets the sequence S := { x ^ (2 * n) | n in {n_start, ..., n_end - 1} }.
+/// Generates the sequence S := { x ^ (2 * n) | n in {n_start, ..., n_end - 1} }.
 /// If make_pow0_zero is true, x ^ 0 is replaced with 0.
 fn getPow2nSequence(
     comptime base: u8,
@@ -68,7 +68,7 @@ fn getShiftForBase(comptime base_num: u8) comptime_int {
 }
 
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
-pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
+pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIndex: type) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
@@ -79,10 +79,14 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
         bounds: [depth][]Ball2f = undefined,
         num_bodies: usize = 0,
 
+        comptime {
+            if (depth < 2) @compileError("SquareTree depth must be greater than 1");
+        }
+
         pub const NodeIndex = getMinimialIntegerForRange(num_leaves);
-        pub const BodyIndex = struct {
+        pub const BodyIndex = packed struct {
             leaf_index: NodeIndex,
-            body_number: u16, // TODO: make this type a comptime parameter
+            body_number: ArrayIndex,
         };
         pub const nodes_in_level = getPow2nSequence(base_number, 1, depth + 1, false); // the number of nodes in each level
         pub const nodes_above_level = getPow2nSequence(base_number, 0, depth, true); // cumulative number of nodes above each level
@@ -93,13 +97,9 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
         const base: NodeIndex = @intCast(base_number);
         const base_squared: NodeIndex = base * base;
         const level_bitshift = getShiftForBase(base_number);
-
         const Self = @This();
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
-            if (depth < 2) {
-                @compileError("SquareTree depth must be greater than 1");
-            }
             var leaf_lists: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
             for (0..num_leaves) |i| {
                 leaf_lists[i] = try std.ArrayListUnmanaged(Ball2f).initCapacity(allocator, leaf_capacity);
@@ -154,8 +154,8 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8) type {
 
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
-            std.debug.print("■ SquareTree({}, {}) info:\n", .{ base, depth });
-            std.debug.print("   Index type: {} ({} bytes)\n", .{ @typeInfo(NodeIndex), @sizeOf(NodeIndex) });
+            std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, ArrayIndex });
+            std.debug.print("   Body Index = {} + {} ({} bytes)\n", .{ NodeIndex, ArrayIndex, @sizeOf(BodyIndex) });
             std.debug.print("   Number leaf nodes: {d}\n", .{num_leaves});
             std.debug.print("   Total nodes: {d}\n", .{num_nodes});
             std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
@@ -300,19 +300,22 @@ const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
-    const Tree2x8 = SquareTree(2, 8);
+    const Tree2x8 = SquareTree(2, 8, u8);
     var qt = try Tree2x8.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
+    Tree2x8.printTypeInfo();
 
-    const Tree4x4 = SquareTree(4, 4);
+    const Tree4x4 = SquareTree(4, 4, u8);
     var ht = try Tree4x4.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
+    Tree4x4.printTypeInfo();
 }
 
 test "quad tree indexing" {
     const tree_depth = 3;
-    const QuadTree4 = SquareTree(2, tree_depth);
-    var qt = try QuadTree4.init(testing.allocator, 0, Vec2f{ 0, 0 }, 8.0);
+    const QuadTree3 = SquareTree(2, tree_depth, u10);
+    QuadTree3.printTypeInfo();
+    var qt = try QuadTree3.init(testing.allocator, 0, Vec2f{ 0, 0 }, 8.0);
     defer qt.deinit();
 
     const pt_check_1 = qt.isPointWithinRegion(Vec2f{ 0, 0 });
@@ -326,19 +329,19 @@ test "quad tree indexing" {
 
     const pt_a = Vec2f{ 4.1, 4.1 };
     const index_a = qt.getLeafIndexForPoint(pt_a);
-    const parent_a = QuadTree4.getPredeccessorIndex(index_a, 1);
-    const grandparent_a = QuadTree4.getPredeccessorIndex(index_a, 2);
+    const parent_a = QuadTree3.getPredeccessorIndex(index_a, 1);
+    const grandparent_a = QuadTree3.getPredeccessorIndex(index_a, 2);
     try testing.expectEqual(48, index_a);
     try testing.expectEqual(12, parent_a);
     try testing.expectEqual(3, grandparent_a);
 
     const pt_b = Vec2f{ 7.99, 7.99 };
     const ln_num_b = qt.getLeafIndexForPoint(pt_b);
-    try testing.expectEqual(QuadTree4.num_leaves - 1, ln_num_b);
-    for (0..QuadTree4.num_leaves) |n| {
-        const pred_0 = QuadTree4.getPredeccessorIndex(@intCast(n), 0);
-        const pred_1 = QuadTree4.getPredeccessorIndex(@intCast(n), 1);
-        const pred_2 = QuadTree4.getPredeccessorIndex(@intCast(n), 2);
+    try testing.expectEqual(QuadTree3.num_leaves - 1, ln_num_b);
+    for (0..QuadTree3.num_leaves) |n| {
+        const pred_0 = QuadTree3.getPredeccessorIndex(@intCast(n), 0);
+        const pred_1 = QuadTree3.getPredeccessorIndex(@intCast(n), 1);
+        const pred_2 = QuadTree3.getPredeccessorIndex(@intCast(n), 2);
         try testing.expectEqual(n, pred_0);
         try testing.expectEqual(n / 16, pred_2);
         try testing.expectEqual(n / 4, pred_1);
@@ -347,7 +350,7 @@ test "quad tree indexing" {
 
 test "hex tree indexing" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth);
+    const HexTree2 = SquareTree(4, tree_depth, u8);
     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 8.0);
     defer tree.deinit();
 
@@ -380,7 +383,7 @@ test "hex tree indexing" {
 
 test "hex tree overlap" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth);
+    const HexTree2 = SquareTree(4, tree_depth, u8);
     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 1.0);
     defer tree.deinit();
 
@@ -410,7 +413,7 @@ test "hex tree overlap" {
 }
 
 test "square tree add remove" {
-    const QuadTree = SquareTree(2, 4);
+    const QuadTree = SquareTree(2, 4, u4);
     var qt = try QuadTree.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
 

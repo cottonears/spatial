@@ -14,7 +14,7 @@ const zero_4f = Vec2f{ 0, 0, 0, 0 };
 var rng = rand.Xoshiro256.init(0);
 
 /// A circular region in 2D Euclidean space.
-//  I.e., the region B := { b in R^2 | d(centre, b) < radius }
+///  I.e., the region B := { b in R^2 : ||c, b|| < R }.
 pub const Ball2f = struct {
     centre: Vec2f,
     radius: f32 = 0,
@@ -26,7 +26,10 @@ pub const Ball2f = struct {
     }
 
     pub fn overlapsBox(self: Self, b: Box2f) bool {
-        // TODO: implement this?
+        // One way of doing this would be to do the following (might be a bit inefficient):
+        // - define d as the line joining the centres
+        // - check where the box's edges intersect d
+        // - overlap if the intersection point is within the ball's radius of its centre
         _ = self;
         _ = b;
         return false;
@@ -74,11 +77,18 @@ pub const Ball2f = struct {
 };
 
 /// An axis-aligned rectangular region in 2D Euclidean space.
-//  I.e., the region B: = { b in R^2 | (|centre - b[0]| < 0.5 * w) and (|centre - b[1]| < 0.5 * h)}
+///  I.e., the region B: = { b in R^2 : |c_y - b_y| < 0.5 * HW and |c_y - b_y| < 0.5 * HH }.
 pub const Box2f = struct {
     centre: Vec2f,
-    width: f32,
-    height: f32,
+    half_width: f32,
+    half_height: f32,
+
+    pub fn overlapsBox(self: Box2f, other: Box2f) bool {
+        const d = self.centre - other.centre;
+        const width_sum = self.half_width + other.half_width;
+        const height_sum = self.half_height + other.half_height;
+        return @abs(d[0]) < width_sum and @abs(d[1]) < height_sum;
+    }
 };
 
 pub fn reseedRng(s: usize) void {
@@ -89,7 +99,8 @@ pub fn getRandUniform(min: f32, max: f32) f32 {
     return min + (max - min) * rng.random().float(f32);
 }
 
-pub fn norm(v: Vec2f) f32 {
+/// Returns the Euclidean norm of the vector v.
+pub fn norm(v: anytype) f32 {
     return @sqrt(squaredSum(v));
 }
 
@@ -114,19 +125,6 @@ pub inline fn asf32(x: anytype) f32 {
 pub inline fn asu32(x: anytype) u32 {
     return @intFromFloat(x);
 }
-
-// pub fn getDistTo4(a: Vec2f, b1: Vec2f, b2: Vec2f, b3: Vec2f, b4: Vec2f) Vec4f {
-//     return Vec4f{ norm(a - b1), norm(a - b2), norm(a - b3), norm(a - b4) };
-// }
-
-// // gets the distance between a and points b1 - b4
-// pub fn getDistTo4Vec(a: Vec2f, bx_vec: Vec4f, by_vec: Vec4f) Vec4f {
-//     const ax_vec: Vec4f = @splat(a[0]);
-//     const ay_vec: Vec4f = @splat(a[1]);
-//     const dx_vec = bx_vec - ax_vec;
-//     const dy_vec = by_vec - ay_vec;
-//     return @sqrt(dx_vec * dx_vec + dy_vec * dy_vec);
-// }
 
 /// Returns a unit length vector in the same direction as v, or a zero vector if it has zero length.
 pub fn normalised2f(v: Vec2f) Vec2f {
@@ -163,14 +161,9 @@ pub fn getMinDistSquaredForInterval(pos_a: Vec2f, vel_a: Vec2f, pos_b: Vec2f, ve
     return squaredSum(d);
 }
 
-pub fn intervalsOverlap(a1: f32, a2: f32, b1: f32, b2: f32) bool {
-    return a1 < b1 and b1 < a2 or a1 < b2 and b2 < a2 or b1 < a1 and a2 < b2;
-}
-
-pub fn boxesOverlap(a1: Vec2f, a2: Vec2f, b1: Vec2f, b2: Vec2f) bool {
-    const x_overlap = intervalsOverlap(a1[0], a2[0], b1[0], b2[0]);
-    const y_overlap = intervalsOverlap(a1[1], a2[1], b1[1], b2[1]);
-    return x_overlap and y_overlap;
+// NOTE: Doesn't handle case where half_width = 0 (implying the open ball is the empty set) sensibly.
+pub fn intervalsOverlap(centre_a: f32, half_width_a: f32, centre_b: f32, half_width_b: f32) bool {
+    return @abs(centre_a - centre_b) < half_width_a + half_width_b;
 }
 
 /// Returns a ball that encompasses both input balls.
@@ -243,32 +236,6 @@ test "closest dist interval" {
     try testing.expectApproxEqAbs(0, perpendicular_result, tolerance);
 }
 
-test "intervals overlap" {
-    const check_1 = intervalsOverlap(1, 4, 0, 5);
-    try testing.expectEqual(true, check_1);
-    const check_2 = intervalsOverlap(1, 4, 0, 2);
-    try testing.expectEqual(true, check_2);
-    const check_3 = intervalsOverlap(1, 4, 2, 3);
-    try testing.expectEqual(true, check_3);
-    const check_4 = intervalsOverlap(1, 4, 3, 5);
-    try testing.expectEqual(true, check_4);
-    const check_5 = intervalsOverlap(1, 4, -1, 0);
-    try testing.expectEqual(false, check_5);
-    const check_6 = intervalsOverlap(1, 4, 5, 6);
-    try testing.expectEqual(false, check_6);
-}
-
-test "boxes overlap" {
-    const check_1 = boxesOverlap(Vec2f{ 0, 0 }, Vec2f{ 1, 1 }, Vec2f{ 0.5, 0.5 }, Vec2f{ 1.5, 1.5 });
-    try testing.expectEqual(true, check_1);
-    const check_2 = boxesOverlap(Vec2f{ 0, 0 }, Vec2f{ 1, 1 }, Vec2f{ 0.5, 0.5 }, Vec2f{ 0.75, 0.75 });
-    try testing.expectEqual(true, check_2);
-    const check_3 = boxesOverlap(Vec2f{ 0, 0 }, Vec2f{ 1, 1 }, Vec2f{ 1.5, 1.5 }, Vec2f{ 0.75, 0.75 });
-    try testing.expectEqual(true, check_3);
-    const check_4 = boxesOverlap(Vec2f{ 0, 0 }, Vec2f{ 1, 1 }, Vec2f{ 1.5, 1.5 }, Vec2f{ 1.75, 1.75 });
-    try testing.expectEqual(false, check_4);
-}
-
 test "check balls overlap" {
     const a = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 1.0 };
     const b1 = Ball2f{ .centre = Vec2f{ 0.5, 0.5 }, .radius = 0.1 };
@@ -301,4 +268,20 @@ test "check balls overlap 8x" {
 
     const check_result = a.overlapsBallsX8(balls);
     try testing.expectEqual([8]bool{ true, true, false, false, false, true, true, false }, check_result);
+}
+
+test "boxes overlap" {
+    const a = Box2f{ .centre = Vec2f{ 0.5, 0.5 }, .half_width = 0.5, .half_height = 0.5 };
+    const b1 = Box2f{ .centre = Vec2f{ 0.75, 0.75 }, .half_width = 0.5, .half_height = 0.5 };
+    const b2 = Box2f{ .centre = Vec2f{ 0.625, 0.625 }, .half_width = 0.125, .half_height = 0.125 };
+    const b3 = Box2f{ .centre = Vec2f{ 1.125, 1.125 }, .half_width = 0.375, .half_height = 0.375 };
+    const b4 = Box2f{ .centre = Vec2f{ 1.625, 1.625 }, .half_width = 0.125, .half_height = 0.125 };
+    const check_1 = a.overlapsBox(b1);
+    const check_2 = a.overlapsBox(b2);
+    const check_3 = a.overlapsBox(b3);
+    const check_4 = a.overlapsBox(b4);
+    try testing.expectEqual(true, check_1);
+    try testing.expectEqual(true, check_2);
+    try testing.expectEqual(true, check_3);
+    try testing.expectEqual(false, check_4);
 }
