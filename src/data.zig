@@ -296,6 +296,18 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
     };
 }
 
+// IDEA: When using square-trees in practice it is probably a good idea to do something like the following:
+// 1) Use a coarse tree for static objects.
+// 2) Store slow - medium speed objects in a fine tree (that overlaps the static tree).
+// 3) Don't bother storing very fast objects in a tree.
+// Doing 1 is quite obvious, since we don't want to check if static objects overlap at runtime.
+// We can check all category 2 objects for collisions with category 1 and 2 objects.
+// Doing 3 is advantageous if we don't want to check collisions of category 3 objects with each other.
+// Category 3 objects, and instantaneous rays, will have huge bounding volumes due to their speed.
+// This could result in a large amount of potential collisions being returned for each of them.
+// It will probably be more efficient to process these potential collisions to find the first actual collision,
+// allowing us to ignore later potential collisions.
+
 const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
