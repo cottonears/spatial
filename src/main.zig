@@ -77,7 +77,6 @@ fn benchmarkBallsOverlap(allocator: std.mem.Allocator) !void {
 
 fn benchmarkIntervalsOverlap() void {
     var overlap_count_1: u32 = 0;
-    var overlap_count_2: u32 = 0;
     const t_0 = time.microTimestamp();
     for (random_balls) |b| {
         const intervals_overlap = core.intervalsOverlap(
@@ -89,19 +88,9 @@ fn benchmarkIntervalsOverlap() void {
         overlap_count_1 += if (intervals_overlap) 1 else 0;
     }
     const t_1 = time.microTimestamp();
-    for (random_balls) |b| {
-        const intervals_overlap = core.intervalsOverlap(
-            b.centre[0],
-            b.radius,
-            b.centre[1],
-            b.radius,
-        );
-        overlap_count_2 += if (intervals_overlap) 1 else 0;
-    }
-    const t_2 = time.microTimestamp();
     std.debug.print(
-        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 took {} us; method 2 took {} us.\n",
-        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1 },
+        "Overlapping intervals benchmark: found {} overlaps. Method 1 took {} us.\n",
+        .{ overlap_count_1, t_1 - t_0 },
     );
 }
 
@@ -178,7 +167,7 @@ test "encompassing balls" {
     for (0..test_len / 10) |i| {
         const a = Ball2f{ .centre = random_vecs[i], .radius = @abs(0.5 * random_floats[i]) };
         const b = Ball2f{ .centre = random_vecs[i + 1], .radius = @abs(0.5 * random_floats[i + 1]) };
-        const c = core.getEncompassingBall(a, b);
+        const c = Ball2f.getEncompassingBall(a, b);
         try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[0]);
         try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[2]);
         try test_canvas.addCircle(testing.allocator, c.centre, c.radius, dashed_styles[6]);
@@ -210,7 +199,6 @@ test "square tree" {
     const base_num = 4;
     const tree_depth = 2;
     const TreeType = data.SquareTree(base_num, tree_depth, u16);
-    TreeType.printTypeInfo();
     var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
     defer st.deinit();
 
@@ -268,7 +256,7 @@ test "square tree" {
         }
         // draw all overlaps in a different colour
         for (overlaps_found) |overlap_index| {
-            const overlap_body = st.bodies[overlap_index.leaf_index].items[overlap_index.body_number];
+            const overlap_body = st.leaf_arrays[overlap_index.leaf_index].items[overlap_index.body_number];
             if (@reduce(.And, overlap_body.centre == query_body.centre)) continue; // assumed to be the same body
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[5]);
             try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[5]);

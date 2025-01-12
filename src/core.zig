@@ -20,6 +20,19 @@ pub const Ball2f = struct {
     radius: f32 = 0,
     const Self = @This();
 
+    /// Returns a ball that encompasses both input balls.
+    pub fn getEncompassingBall(a: Ball2f, b: Ball2f) Ball2f {
+        const d = a.centre - b.centre;
+        const dist = norm(d);
+        if (b.radius == 0 or (dist + b.radius < a.radius)) return a; // a encompasses b
+        if (a.radius == 0 or (dist + a.radius < b.radius)) return b; // b encompasses a
+        // otherwise, create a new circle that encompasses both a and b
+        return .{
+            .radius = 0.5 * (dist + a.radius + b.radius),
+            .centre = scaledVec2f(0.5, (a.centre + b.centre)) + scaledVec2f(0.5 * (a.radius - b.radius) / dist, d),
+        };
+    }
+
     pub fn overlapsBall(self: Self, b: Ball2f) bool {
         if (self.radius == 0 or b.radius == 0) return false;
         return squaredSum(self.centre - b.centre) < (self.radius + b.radius) * (self.radius + b.radius);
@@ -164,19 +177,6 @@ pub fn getMinDistSquaredForInterval(pos_a: Vec2f, vel_a: Vec2f, pos_b: Vec2f, ve
 // NOTE: Doesn't handle case where half_width = 0 (implying the open ball is the empty set) sensibly.
 pub fn intervalsOverlap(centre_a: f32, half_width_a: f32, centre_b: f32, half_width_b: f32) bool {
     return @abs(centre_a - centre_b) < half_width_a + half_width_b;
-}
-
-/// Returns a ball that encompasses both input balls.
-pub fn getEncompassingBall(a: Ball2f, b: Ball2f) Ball2f {
-    const d = a.centre - b.centre;
-    const dist = norm(d);
-    if (b.radius == 0 or (dist + b.radius < a.radius)) return a; // a encompasses b
-    if (a.radius == 0 or (dist + a.radius < b.radius)) return b; // b encompasses a
-    // otherwise, create a new circle that encompasses both a and b
-    return .{
-        .radius = 0.5 * (dist + a.radius + b.radius),
-        .centre = scaledVec2f(0.5, (a.centre + b.centre)) + scaledVec2f(0.5 * (a.radius - b.radius) / dist, d),
-    };
 }
 
 const testing = std.testing;

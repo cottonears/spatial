@@ -1,109 +1,72 @@
 const std = @import("std");
 const core = @import("core.zig");
 const Vec2f = core.Vec2f;
-const Vec4f = core.Vec4f;
-const Vec8f = core.Vec8f;
-const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 
-/// Raises a number to the power of (2 * n).
-fn pow2n(comptime base: u8, comptime n: u8) usize {
-    var s: usize = 1;
-    inline for (0..n) |_| s = s * base * base;
-    return s;
-}
-
-/// Generates the sequence S := { x ^ (2 * n) | n in {n_start, ..., n_end - 1} }.
-/// If make_pow0_zero is true, x ^ 0 is replaced with 0.
-fn getPow2nSequence(
-    comptime base: u8,
-    comptime n_start: u8,
-    comptime n_end: u8,
-    comptime make_pow0_zero: bool,
-) [n_end - n_start]usize {
+/// Generates the sequence S := { x ^ (2 * n) | n in [n_start, n_end) }.
+fn getPow2nSequence(comptime base: u8, comptime n_start: u8, comptime n_end: u8) @Vector(n_end - n_start, usize) {
+    std.debug.assert(n_end > n_start);
     var seq: [n_end - n_start]usize = undefined;
-    inline for (n_start..n_end, 0..) |n, i| {
-        seq[i] = if (make_pow0_zero and n == 0) 0 else pow2n(base, n);
-    }
+    inline for (n_start..n_end, 0..) |n, i| seq[i] = try std.math.powi(usize, base, 2 * n);
     return seq;
 }
 
 /// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
-fn getReversedRange(comptime T: type, comptime len: T) [len]T {
+fn getReversedRange(comptime T: type, len: T) [len]T {
     var range: [len]T = undefined;
     inline for (0..len) |i| range[i] = len - i - 1;
     return range;
 }
 
-/// Returns log2(len) for values of len that are supported by the SquareTree struct.
-fn getMinimialIntegerForRange(comptime len: u32) type {
-    switch (len) {
-        4 => return u2,
-        16 => return u4,
-        64 => return u6,
-        256 => return u8,
-        1024 => return u10,
-        4096 => return u12,
-        16384 => return u14,
-        65536 => return u16,
-        262144 => return u18,
-        1048576 => return u20,
-        4194304 => return u22,
-        16777216 => return u24,
-        else => unreachable, // unsupported
+/// Gets a 'shift-amount' that can be used to effect an integer mutiply/divide with a left/right bit-shift operation.
+fn getMultDivShift(comptime number: comptime_int) comptime_int {
+    switch (number) { //
+        4 => return @as(u2, 2),
+        16 => return @as(u3, 4),
+        64 => return @as(u3, 6),
+        256 => return @as(u4, 8),
+        else => unreachable,
     }
 }
 
-/// Gets a 'shift-amount' that can be used to mutiply/divide by (base * base) using a bit-shift.
-fn getShiftForBase(comptime base_num: u8) comptime_int {
-    switch (base_num) {
-        2 => return @as(u2, 2),
-        4 => return @as(u3, 4),
-        8 => return @as(u3, 6),
-        16 => return @as(u4, 8),
-        else => {
-            @compileError("Unsupported base number (must be a small power of two)");
-        },
-    }
-}
-
+// IDEA: It might be worth inserting the root node at level 0 in the below struct.
+//       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
-pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIndex: type) type {
+pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex: type) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
         size: f32,
         size_per_level: [depth]f32,
         scale_per_level: [depth]f32,
-        bodies: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined,
         bounds: [depth][]Ball2f = undefined,
+        leaf_arrays: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined,
+        leaf_empty_positions: [num_leaves]ArrayIndex = undefined, // TODO: try using a collection here and see how it affects speed + memory usage
         num_bodies: usize = 0,
 
-        comptime {
-            if (depth < 2) @compileError("SquareTree depth must be greater than 1");
-        }
-
-        pub const NodeIndex = getMinimialIntegerForRange(num_leaves);
+        pub const NodeIndex = std.math.IntFittingRange(0, num_leaves);
         pub const BodyIndex = packed struct {
             leaf_index: NodeIndex,
             body_number: ArrayIndex,
         };
-        pub const nodes_in_level = getPow2nSequence(base_number, 1, depth + 1, false); // the number of nodes in each level
-        pub const nodes_above_level = getPow2nSequence(base_number, 0, depth, true); // cumulative number of nodes above each level
-        pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
-        pub const num_parents = nodes_above_level[depth - 1]; // the number of non-leaf nodes
-        pub const num_nodes = num_parents + num_leaves; // total number of nodes
-        pub const reverse_levels = getReversedRange(u8, depth);
-        const base: NodeIndex = @intCast(base_number);
-        const base_squared: NodeIndex = base * base;
-        const level_bitshift = getShiftForBase(base_number);
         const Self = @This();
 
+        // check the parameters used are supported
+        comptime {
+            if (!(base == 2 or base == 4 or base == 8 or base == 16)) @compileError("base value not supported");
+            if (depth < 2) @compileError("depth must be greater than 1");
+        }
+        pub const nodes_in_level = getPow2nSequence(base_num, 1, depth + 1);
+        pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
+        pub const num_nodes = @reduce(.Add, nodes_in_level);
+        pub const reverse_levels = getReversedRange(u8, depth);
+        const base: NodeIndex = @intCast(base_num);
+        const base_squared: NodeIndex = base * base;
+        const level_bitshift = getMultDivShift(base_squared);
+
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
-            var leaf_lists: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
-            for (0..num_leaves) |i| {
-                leaf_lists[i] = try std.ArrayListUnmanaged(Ball2f).initCapacity(allocator, leaf_capacity);
-            }
+            if (size <= 0.0) return error.InvalidSize;
+
             var bballs: [depth][]Ball2f = undefined;
             var size_per_lvl: [depth]f32 = undefined;
             var scale_per_lvl: [depth]f32 = undefined;
@@ -115,10 +78,17 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
                 last_size = last_size / base;
             }
 
+            var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
+            const leaf_empty_positions = [_]ArrayIndex{std.math.maxInt(ArrayIndex)} ** num_leaves;
+            for (0..num_leaves) |i| {
+                leaf_arrays[i] = try std.ArrayListUnmanaged(Ball2f).initCapacity(allocator, leaf_capacity);
+            }
+
             return Self{
                 .allocator = allocator,
-                .bodies = leaf_lists,
                 .bounds = bballs,
+                .leaf_arrays = leaf_arrays,
+                .leaf_empty_positions = leaf_empty_positions,
                 .origin = origin,
                 .size = size,
                 .size_per_level = size_per_lvl,
@@ -127,7 +97,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
         }
 
         pub fn deinit(self: *Self) void {
-            for (0..num_leaves) |i| self.bodies[i].deinit(self.allocator);
+            for (0..num_leaves) |i| self.leaf_arrays[i].deinit(self.allocator);
             for (0..depth) |lvl| self.allocator.free(self.bounds[lvl]);
         }
 
@@ -156,10 +126,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
         pub fn printTypeInfo() void {
             std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, ArrayIndex });
             std.debug.print("   Body Index = {} + {} ({} bytes)\n", .{ NodeIndex, ArrayIndex, @sizeOf(BodyIndex) });
-            std.debug.print("   Number leaf nodes: {d}\n", .{num_leaves});
-            std.debug.print("   Total nodes: {d}\n", .{num_nodes});
             std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
-            std.debug.print("   Nodes above level: {any}\n", .{nodes_above_level});
             std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
         }
 
@@ -220,8 +187,8 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
                         var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
-                        for (0..self.bodies[i].items.len) |j| {
-                            ball = core.getEncompassingBall(ball, self.bodies[i].items[j]);
+                        for (0..self.leaf_arrays[i].items.len) |j| {
+                            ball = Ball2f.getEncompassingBall(ball, self.leaf_arrays[i].items[j]);
                         }
                         self.bounds[lvl][i] = ball;
                     }
@@ -231,7 +198,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
                         var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
                         const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
                         for (child_indexes) |j| {
-                            ball = core.getEncompassingBall(ball, self.bounds[lvl + 1][j]);
+                            ball = Ball2f.getEncompassingBall(ball, self.bounds[lvl + 1][j]);
                         }
                         self.bounds[lvl][i] = ball;
                     }
@@ -259,7 +226,7 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
             // iterate through leaf nodes
             var buff_index: usize = 0;
             for (search_buff[0..search_len]) |leaf_index| {
-                for (self.bodies[leaf_index].items, 0..) |b, i| {
+                for (self.leaf_arrays[leaf_index].items, 0..) |b, i| {
                     if (query_ball.overlapsBall(b)) {
                         buff[buff_index] = BodyIndex{
                             .leaf_index = leaf_index,
@@ -273,25 +240,39 @@ pub fn SquareTree(comptime base_number: u8, comptime depth: u8, comptime ArrayIn
         }
 
         pub fn addBody(self: *Self, ball: Ball2f) !BodyIndex {
-            const leaf_index = self.getLeafIndexForPoint(ball.centre);
-            const body_num = self.bodies[leaf_index].items.len;
-            // TODO: add the body to a neighbouring leaf if this leaf has reached capacity?
-            try self.bodies[leaf_index].append(self.allocator, ball);
+            const i = self.getLeafIndexForPoint(ball.centre);
+            var body_num: ArrayIndex = undefined;
+            // if there's an empty position in the array, replace it
+            if (self.leaf_empty_positions[i] < self.leaf_arrays[i].items.len) {
+                body_num = self.leaf_empty_positions[i];
+                self.leaf_arrays[i].items[body_num] = ball;
+                // need to update the empty position for this array
+                self.leaf_empty_positions[i] = std.math.maxInt(ArrayIndex);
+                for (body_num..self.leaf_arrays[i].items.len) |j| {
+                    if (self.leaf_arrays[i].items[j].radius == 0) {
+                        self.leaf_empty_positions[i] = @intCast(j);
+                        break;
+                    }
+                }
+            } else { // no empty positions in the array, append body at the end
+                // TODO: add the body to a neighbouring leaf if this leaf's array has reached capacity?
+                body_num = @intCast(self.leaf_arrays[i].items.len);
+                try self.leaf_arrays[i].append(self.allocator, ball);
+            }
             self.num_bodies += 1;
-            return BodyIndex{ .leaf_index = leaf_index, .body_number = @intCast(body_num) };
+            return BodyIndex{ .leaf_index = i, .body_number = @intCast(body_num) };
         }
 
         pub fn getBody(self: Self, body_index: BodyIndex) Ball2f {
-            return self.bodies[body_index.leaf_index].items[body_index.body_number];
+            return self.leaf_arrays[body_index.leaf_index].items[body_index.body_number];
         }
 
-        // IDEA: The below will invalidate indexing, which is inconvenient.
-        //       We could prevent this by swapping with an empty ball maybe?
-        //       Add will need to be updated to search for the first empty position, but that should be OK.
-        pub fn removeBody(self: *Self, body_index: BodyIndex) Ball2f {
-            const b = self.bodies[body_index.leaf_index].swapRemove(body_index.body_number);
+        pub fn deleteBody(self: *Self, k: BodyIndex) void {
+            self.leaf_arrays[k.leaf_index].items[k.body_number].radius = 0;
+            if (k.body_number < self.leaf_empty_positions[k.leaf_index]) {
+                self.leaf_empty_positions[k.leaf_index] = k.body_number;
+            }
             self.num_bodies -= 1;
-            return b;
         }
     };
 }
@@ -315,18 +296,15 @@ test "square tree init" {
     const Tree2x8 = SquareTree(2, 8, u8);
     var qt = try Tree2x8.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
-    Tree2x8.printTypeInfo();
 
     const Tree4x4 = SquareTree(4, 4, u8);
     var ht = try Tree4x4.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
-    Tree4x4.printTypeInfo();
 }
 
 test "quad tree indexing" {
     const tree_depth = 3;
     const QuadTree3 = SquareTree(2, tree_depth, u10);
-    QuadTree3.printTypeInfo();
     var qt = try QuadTree3.init(testing.allocator, 0, Vec2f{ 0, 0 }, 8.0);
     defer qt.deinit();
 
@@ -441,25 +419,9 @@ test "square tree add remove" {
 
     for (indexes, 0..) |b_index, i| {
         const get_body = qt.getBody(b_index);
-        const removed_body = qt.removeBody(b_index);
+        qt.deleteBody(b_index);
         try testing.expectEqual(test_bodies[i].centre, get_body.centre);
         try testing.expectEqual(test_bodies[i].radius, get_body.radius);
-        try testing.expectEqual(test_bodies[i].centre, removed_body.centre);
-        try testing.expectEqual(test_bodies[i].radius, removed_body.radius);
     }
     try testing.expectEqual(0, qt.num_bodies);
 }
-
-// test "square tree get point" {
-//     const QuadTree = SquareTree(4, 2);
-//     var qt = try QuadTree.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
-//     defer qt.deinit();
-
-//     for (0..2) |lvl| {
-//         std.debug.print("\nLevel = {d}\n", .{lvl});
-//         for (0..QuadTree.nodes_in_level[lvl]) |i| {
-//             const pt = try qt.getNodeOrigin(@truncate(lvl), @truncate(i));
-//             std.debug.print("{X}: point = {d:.3}\n", .{ i, pt });
-//         }
-//     }
-// }
