@@ -25,7 +25,6 @@ pub fn main() !void {
         const slice = std.mem.span(os.argv[1]);
         num_trials = try fmt.parseInt(u16, slice, 0);
     }
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer {
@@ -39,14 +38,16 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
     genRandomData();
     std.debug.print("Running all benchmarks for {} bodies...\n", .{benchmark_len});
     try benchmarkIndexing(allocator);
-    try benchmarkSquareTree(allocator);
+    try benchmarkSquareTreeBalls(allocator);
+    try benchmarkSquareTreeBoxes(allocator);
     benchmarkOverlapChecks();
     std.debug.print("Benchmarks complete!\n", .{});
 }
 
-fn benchmarkSquareTree(allocator: std.mem.Allocator) !void {
+fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
     const tree_depth = 5;
-    const TreeType = data.SquareTree(2, tree_depth, u6);
+    const TreeType = data.SquareTree(2, tree_depth, u6, Ball2f);
+    TreeType.printTypeInfo();
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
@@ -55,6 +56,7 @@ fn benchmarkSquareTree(allocator: std.mem.Allocator) !void {
 
     const t_0 = time.microTimestamp();
     for (0..num_trials) |_| {
+        qt.clearAllBodies();
         for (random_balls) |ball| _ = try qt.addBody(ball);
     }
     const t_1 = time.microTimestamp();
@@ -71,8 +73,42 @@ fn benchmarkSquareTree(allocator: std.mem.Allocator) !void {
     const t_3 = time.microTimestamp();
 
     std.debug.print(
-        "Overlapping balls benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} ms.\n",
-        .{ overlap_count, t_1 - t_0, t_2 - t_1, @divFloor(t_3 - t_2, 1000) },
+        "Overlapping balls benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
+        .{ overlap_count, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
+    );
+}
+
+fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
+    const tree_depth = 5;
+    const TreeType = data.SquareTree(2, tree_depth, u6, Box2f);
+    TreeType.printTypeInfo();
+    const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
+    var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
+    defer qt.deinit();
+    var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
+    var overlap_count: u32 = 0;
+
+    const t_0 = time.microTimestamp();
+    for (0..num_trials) |_| {
+        qt.clearAllBodies();
+        for (random_boxes) |box| _ = try qt.addBody(box);
+    }
+    const t_1 = time.microTimestamp();
+    for (0..num_trials) |_| {
+        qt.updateBounds();
+    }
+    const t_2 = time.microTimestamp();
+    for (0..num_trials) |_| {
+        for (random_boxes) |b| {
+            const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b);
+            overlap_count += @truncate(overlaps_found.len);
+        }
+    }
+    const t_3 = time.microTimestamp();
+
+    std.debug.print(
+        "Overlapping boxes benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
+        .{ overlap_count, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
     );
 }
 
@@ -84,7 +120,7 @@ fn benchmarkOverlapChecks() void {
     const first_ball = random_balls[0];
     for (0..num_trials) |_| {
         for (random_balls) |b| {
-            const overlap = first_ball.overlapsBall(b);
+            const overlap = first_ball.overlapsOther(b);
             overlap_count_1 += if (overlap) 1 else 0;
         }
     }
@@ -93,21 +129,21 @@ fn benchmarkOverlapChecks() void {
     const first_box = random_boxes[0];
     for (0..num_trials) |_| {
         for (random_boxes) |b| {
-            const overlap = first_box.overlapsBox(b);
+            const overlap = first_box.overlapsOther(b);
             overlap_count_2 += if (overlap) 1 else 0;
         }
     }
     const t_2 = time.microTimestamp();
 
     std.debug.print(
-        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 took {} us; method 2 took {} us.\n",
+        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 (balls) took {} us; method 2 (boxes) took {} us.\n",
         .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1 },
     );
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     const tree_depth = 2;
-    const HexTree4 = data.SquareTree(4, tree_depth, u8);
+    const HexTree4 = data.SquareTree(4, tree_depth, u8, Ball2f);
     var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
@@ -134,8 +170,15 @@ fn genRandomData() void {
         const half_width = if (i % 2 == 0) 0.7854 * radius else radius;
         const half_height = if (i % 2 != 0) 0.7854 * radius else radius;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
-        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = radius, };
-        random_boxes[i] = Box2f{ .centre = random_vecs[i], .half_width = half_width, .half_height = half_height, };
+        random_balls[i] = Ball2f{
+            .centre = random_vecs[i],
+            .radius = radius,
+        };
+        random_boxes[i] = Box2f{
+            .centre = random_vecs[i],
+            .half_width = half_width,
+            .half_height = half_height,
+        };
     }
     random_data_generated = true;
 }
@@ -182,7 +225,7 @@ test "encompassing balls" {
     for (0..test_len / 10) |i| {
         const a = Ball2f{ .centre = random_vecs[i], .radius = @abs(0.5 * random_floats[i]) };
         const b = Ball2f{ .centre = random_vecs[i + 1], .radius = @abs(0.5 * random_floats[i + 1]) };
-        const c = Ball2f.getEncompassingBall(a, b);
+        const c = Ball2f.getEncompassing(a, b);
         try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[0]);
         try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[2]);
         try test_canvas.addCircle(testing.allocator, c.centre, c.radius, dashed_styles[6]);
@@ -213,7 +256,7 @@ test "square tree" {
     defer deinitTesting();
     const base_num = 4;
     const tree_depth = 2;
-    const TreeType = data.SquareTree(base_num, tree_depth, u16);
+    const TreeType = data.SquareTree(base_num, tree_depth, u16, Ball2f);
     var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
     defer st.deinit();
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("core.zig");
 const Vec2f = core.Vec2f;
 const Ball2f = core.Ball2f;
+const Box2f = core.Box2f;
 
 /// Generates the sequence S := { x ^ (2 * n) | n in [n_start, n_end) }.
 fn getPow2nSequence(comptime base: u8, comptime n_start: u8, comptime n_end: u8) @Vector(n_end - n_start, usize) {
@@ -32,19 +33,24 @@ fn getMultDivShift(comptime number: comptime_int) comptime_int {
 // IDEA: It might be worth inserting the root node at level 0 in the below struct.
 //       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
-pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex: type) type {
+pub fn SquareTree(
+    comptime base_num: u8, // Each non-leaf node will have base * base children.
+    comptime depth: u8, // The depth of the tree.
+    comptime ArrayIndex: type, // The type that will be used to index the arrays that store data in leaf nodes.
+    comptime VolumeType: anytype, // The type of volume that will be stored in the tree.
+) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
         size: f32,
         size_per_level: [depth]f32,
         scale_per_level: [depth]f32,
-        bounds: [depth][]Ball2f = undefined,
-        leaf_arrays: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined,
+        bounds: [depth][]VolumeType = undefined,
+        leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined,
         leaf_empty_positions: [num_leaves]ArrayIndex = undefined, // TODO: try using a collection here and see how it affects speed + memory usage
         num_bodies: usize = 0,
 
-        pub const NodeIndex = std.math.IntFittingRange(0, num_leaves);
+        pub const NodeIndex = std.math.IntFittingRange(0, num_leaves - 1);
         pub const BodyIndex = packed struct {
             leaf_index: NodeIndex,
             body_number: ArrayIndex,
@@ -67,21 +73,21 @@ pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
 
-            var bballs: [depth][]Ball2f = undefined;
+            var bballs: [depth][]VolumeType = undefined;
             var size_per_lvl: [depth]f32 = undefined;
             var scale_per_lvl: [depth]f32 = undefined;
             var last_size = size;
             for (0..depth) |lvl| {
-                bballs[lvl] = try allocator.alloc(Ball2f, nodes_in_level[lvl]);
+                bballs[lvl] = try allocator.alloc(VolumeType, nodes_in_level[lvl]);
                 size_per_lvl[lvl] = last_size / base;
                 scale_per_lvl[lvl] = 1.0 / size_per_lvl[lvl];
                 last_size = last_size / base;
             }
 
-            var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(Ball2f) = undefined;
+            var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined;
             const leaf_empty_positions = [_]ArrayIndex{std.math.maxInt(ArrayIndex)} ** num_leaves;
             for (0..num_leaves) |i| {
-                leaf_arrays[i] = try std.ArrayListUnmanaged(Ball2f).initCapacity(allocator, leaf_capacity);
+                leaf_arrays[i] = try std.ArrayListUnmanaged(VolumeType).initCapacity(allocator, leaf_capacity);
             }
 
             return Self{
@@ -124,8 +130,14 @@ pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex
 
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
-            std.debug.print("■ SquareTree({}, {}, {}) info:\n", .{ base, depth, ArrayIndex });
-            std.debug.print("   Body Index = {} + {} ({} bytes)\n", .{ NodeIndex, ArrayIndex, @sizeOf(BodyIndex) });
+            std.debug.print(
+                "■ SquareTree({}, {}, {}, {}) info:\n",
+                .{ base, depth, ArrayIndex, VolumeType },
+            );
+            std.debug.print(
+                "   Body Index = {} + {} ({} bytes)\n",
+                .{ NodeIndex, ArrayIndex, @sizeOf(BodyIndex) },
+            );
             std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
             std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
         }
@@ -181,75 +193,18 @@ pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex
             return self.getNodePoint(level, index, 1.0, 1.0);
         }
 
-        /// Updates the bounding volumes within the tree.
-        pub fn updateBounds(self: *Self) void {
-            for (reverse_levels) |lvl| {
-                if (lvl == depth - 1) { // leaf nodes
-                    for (0..num_leaves) |i| {
-                        var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
-                        for (0..self.leaf_arrays[i].items.len) |j| {
-                            ball = Ball2f.getEncompassingBall(ball, self.leaf_arrays[i].items[j]);
-                        }
-                        self.bounds[lvl][i] = ball;
-                    }
-                } else { // parent nodes
-                    var child_index_buff: [base_squared]NodeIndex = undefined;
-                    for (0..self.bounds[lvl].len) |i| {
-                        var ball = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 0 }; // start with an empty ball
-                        const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
-                        for (child_indexes) |j| {
-                            ball = Ball2f.getEncompassingBall(ball, self.bounds[lvl + 1][j]);
-                        }
-                        self.bounds[lvl][i] = ball;
-                    }
-                }
-            }
-        }
-
-        pub fn getOverlappingBodies(self: Self, buff: []BodyIndex, query_ball: Ball2f) ![]BodyIndex {
-            var search_buff: [num_leaves]NodeIndex = undefined;
-            for (0..base_squared) |i| search_buff[i] = @intCast(i);
-            var search_len: usize = @intCast(base_squared);
-            var next_buff: [num_leaves]NodeIndex = undefined;
-            var next_len: usize = 0;
-            // iterate through all parent nodes
-            for (0..depth - 1) |lvl| {
-                for (search_buff[0..search_len]) |i| {
-                    if (query_ball.overlapsBall(self.bounds[lvl][i])) {
-                        next_len += getChildIndexes(next_buff[next_len..], i).len;
-                    }
-                }
-                @memcpy(search_buff[0..next_len], next_buff[0..next_len]);
-                search_len = next_len;
-                next_len = 0;
-            }
-            // iterate through leaf nodes
-            var buff_index: usize = 0;
-            for (search_buff[0..search_len]) |leaf_index| {
-                for (self.leaf_arrays[leaf_index].items, 0..) |b, i| {
-                    if (query_ball.overlapsBall(b)) {
-                        buff[buff_index] = BodyIndex{
-                            .leaf_index = leaf_index,
-                            .body_number = @intCast(i),
-                        };
-                        buff_index += 1;
-                    }
-                }
-            }
-            return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
-        }
-
-        pub fn addBody(self: *Self, ball: Ball2f) !BodyIndex {
+        /// Adds a body to the tree and returns its index.
+        pub fn addBody(self: *Self, ball: VolumeType) !BodyIndex {
             const i = self.getLeafIndexForPoint(ball.centre);
             var body_num: ArrayIndex = undefined;
-            // if there's an empty position in the array, replace it
+            // if there's an empty position in the array, fi it
             if (self.leaf_empty_positions[i] < self.leaf_arrays[i].items.len) {
                 body_num = self.leaf_empty_positions[i];
                 self.leaf_arrays[i].items[body_num] = ball;
                 // need to update the empty position for this array
                 self.leaf_empty_positions[i] = std.math.maxInt(ArrayIndex);
                 for (body_num..self.leaf_arrays[i].items.len) |j| {
-                    if (self.leaf_arrays[i].items[j].radius == 0) {
+                    if (self.leaf_arrays[i].items[j].isEmpty()) {
                         self.leaf_empty_positions[i] = @intCast(j);
                         break;
                     }
@@ -263,16 +218,84 @@ pub fn SquareTree(comptime base_num: u8, comptime depth: u8, comptime ArrayIndex
             return BodyIndex{ .leaf_index = i, .body_number = @intCast(body_num) };
         }
 
+        /// Gets the body at the specified index.
         pub fn getBody(self: Self, body_index: BodyIndex) Ball2f {
             return self.leaf_arrays[body_index.leaf_index].items[body_index.body_number];
         }
 
+        /// Removes the body at the specified index.
+        /// The index may be re-used when another body is added to the same leaf node.
         pub fn deleteBody(self: *Self, k: BodyIndex) void {
             self.leaf_arrays[k.leaf_index].items[k.body_number].radius = 0;
             if (k.body_number < self.leaf_empty_positions[k.leaf_index]) {
                 self.leaf_empty_positions[k.leaf_index] = k.body_number;
             }
             self.num_bodies -= 1;
+        }
+
+        /// Removes all bodies from the tree.
+        pub fn clearAllBodies(self: *Self) void {
+            self.leaf_empty_positions = [_]ArrayIndex{std.math.maxInt(ArrayIndex)} ** num_leaves;
+            for (0..num_leaves) |i| self.leaf_arrays[i].shrinkRetainingCapacity(0);
+        }
+
+        /// Updates the bounding volumes within the tree.
+        pub fn updateBounds(self: *Self) void {
+            for (reverse_levels) |lvl| {
+                if (lvl == depth - 1) { // leaf nodes
+                    for (0..num_leaves) |i| {
+                        var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty ball
+                        for (0..self.leaf_arrays[i].items.len) |j| {
+                            ball = VolumeType.getEncompassing(ball, self.leaf_arrays[i].items[j]);
+                        }
+                        self.bounds[lvl][i] = ball;
+                    }
+                } else { // parent nodes
+                    var child_index_buff: [base_squared]NodeIndex = undefined;
+                    for (0..self.bounds[lvl].len) |i| {
+                        var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty ball
+                        const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
+                        for (child_indexes) |j| {
+                            ball = VolumeType.getEncompassing(ball, self.bounds[lvl + 1][j]);
+                        }
+                        self.bounds[lvl][i] = ball;
+                    }
+                }
+            }
+        }
+
+        /// Retrieves the indexes of bodies that might overlap.
+        pub fn getOverlappingBodies(self: Self, buff: []BodyIndex, query_vol: VolumeType) ![]BodyIndex {
+            var search_buff: [num_leaves]NodeIndex = undefined;
+            for (0..base_squared) |i| search_buff[i] = @intCast(i);
+            var search_len: usize = @intCast(base_squared);
+            var next_buff: [num_leaves]NodeIndex = undefined;
+            var next_len: usize = 0;
+            // iterate through all parent nodes
+            for (0..depth - 1) |lvl| {
+                for (search_buff[0..search_len]) |i| {
+                    if (query_vol.overlapsOther(self.bounds[lvl][i])) {
+                        next_len += getChildIndexes(next_buff[next_len..], i).len;
+                    }
+                }
+                @memcpy(search_buff[0..next_len], next_buff[0..next_len]);
+                search_len = next_len;
+                next_len = 0;
+            }
+            // iterate through leaf nodes
+            var buff_index: usize = 0;
+            for (search_buff[0..search_len]) |leaf_index| {
+                for (self.leaf_arrays[leaf_index].items, 0..) |b, i| {
+                    if (query_vol.overlapsOther(b)) {
+                        buff[buff_index] = BodyIndex{
+                            .leaf_index = leaf_index,
+                            .body_number = @intCast(i),
+                        };
+                        buff_index += 1;
+                    }
+                }
+            }
+            return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
         }
     };
 }
@@ -293,18 +316,18 @@ const testing = std.testing;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
-    const Tree2x8 = SquareTree(2, 8, u8);
+    const Tree2x8 = SquareTree(2, 8, u8, Ball2f);
     var qt = try Tree2x8.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
 
-    const Tree4x4 = SquareTree(4, 4, u8);
+    const Tree4x4 = SquareTree(4, 4, u8, Ball2f);
     var ht = try Tree4x4.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
 }
 
 test "quad tree indexing" {
     const tree_depth = 3;
-    const QuadTree3 = SquareTree(2, tree_depth, u10);
+    const QuadTree3 = SquareTree(2, tree_depth, u10, Ball2f);
     var qt = try QuadTree3.init(testing.allocator, 0, Vec2f{ 0, 0 }, 8.0);
     defer qt.deinit();
 
@@ -340,7 +363,7 @@ test "quad tree indexing" {
 
 test "hex tree indexing" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth, u8);
+    const HexTree2 = SquareTree(4, tree_depth, u8, Ball2f);
     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 8.0);
     defer tree.deinit();
 
@@ -371,9 +394,9 @@ test "hex tree indexing" {
     }
 }
 
-test "hex tree overlap" {
+test "hex tree overlap ball" {
     const tree_depth = 2;
-    const HexTree2 = SquareTree(4, tree_depth, u8);
+    const HexTree2 = SquareTree(4, tree_depth, u8, Ball2f);
     var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 1.0);
     defer tree.deinit();
 
@@ -402,8 +425,39 @@ test "hex tree overlap" {
     try testing.expectEqual(3, overlap_3_bfs.len);
 }
 
+test "hex tree overlap box" {
+    const tree_depth = 2;
+    const HexTree2 = SquareTree(4, tree_depth, u8, Box2f);
+    var tree = try HexTree2.init(testing.allocator, 4, Vec2f{ 0, 0 }, 1.0);
+    defer tree.deinit();
+
+    const a = Box2f{ .centre = Vec2f{ 0.2, 0.0 }, .half_width = 0.4, .half_height = 0.4 };
+    const b = Box2f{ .centre = Vec2f{ 0.2, 0.5 }, .half_width = 0.2, .half_height = 0.2 };
+    const c = Box2f{ .centre = Vec2f{ 0.2, 0.9 }, .half_width = 0.1, .half_height = 0.1 };
+    const index_a = try tree.addBody(a);
+    const index_b = try tree.addBody(b);
+    const index_c = try tree.addBody(c);
+    tree.updateBounds();
+
+    var index_buff: [8]HexTree2.BodyIndex = undefined;
+    const query_region_1 = Box2f{ .centre = Vec2f{ 0.9, 0.5 }, .half_width = 0.1, .half_height = 0.1 };
+    const overlap_indexes_1 = try tree.getOverlappingBodies(&index_buff, query_region_1);
+    try testing.expectEqual(0, overlap_indexes_1.len);
+    try testing.expectEqual(false, index_a.leaf_index == index_b.leaf_index);
+    try testing.expectEqual(false, index_a.leaf_index == index_c.leaf_index);
+    try testing.expectEqual(false, index_b.leaf_index == index_c.leaf_index);
+
+    // const query_region_2 = Ball2f{ .centre = Vec2f{ -3.5, -3.5 }, .radius = 1.0 };
+    // const overlap_indexes_2 = try tree.getOverlappingBodies(&index_buff, query_region_2);
+    // try testing.expectEqual(0, overlap_indexes_2.len);
+
+    // const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
+    // const overlap_3_bfs = try tree.getOverlappingBodies(&index_buff, query_region_3);
+    // try testing.expectEqual(3, overlap_3_bfs.len);
+}
+
 test "square tree add remove" {
-    const QuadTree = SquareTree(2, 4, u4);
+    const QuadTree = SquareTree(2, 4, u4, Ball2f);
     var qt = try QuadTree.init(testing.allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
 

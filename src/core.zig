@@ -2,15 +2,7 @@
 const std = @import("std");
 const rand = std.rand;
 pub const Vec2f = @Vector(2, f32);
-pub const Vec3f = @Vector(3, f32);
-pub const Vec4f = @Vector(4, f32);
-pub const Vec6f = @Vector(6, f32);
-pub const Vec8f = @Vector(8, f32);
-pub const Vec12f = @Vector(12, f32);
-pub const Vec16f = @Vector(16, f32);
 const zero_2f = Vec2f{ 0, 0 };
-const zero_3f = Vec2f{ 0, 0, 0 };
-const zero_4f = Vec2f{ 0, 0, 0, 0 };
 var rng = rand.Xoshiro256.init(0);
 
 /// A circular region in 2D Euclidean space.
@@ -21,7 +13,7 @@ pub const Ball2f = struct {
     const Self = @This();
 
     /// Returns a ball that encompasses both input balls.
-    pub fn getEncompassingBall(a: Ball2f, b: Ball2f) Ball2f {
+    pub fn getEncompassing(a: Ball2f, b: Ball2f) Ball2f {
         const d = a.centre - b.centre;
         const dist = norm(d);
         if (b.radius == 0 or (dist + b.radius < a.radius)) return a; // a encompasses b
@@ -29,74 +21,56 @@ pub const Ball2f = struct {
         // otherwise, create a new circle that encompasses both a and b
         return .{
             .radius = 0.5 * (dist + a.radius + b.radius),
-            .centre = scaledVec2f(0.5, (a.centre + b.centre)) + scaledVec2f(0.5 * (a.radius - b.radius) / dist, d),
+            .centre = scaledVec(0.5, (a.centre + b.centre)) + scaledVec(0.5 * (a.radius - b.radius) / dist, d),
         };
     }
 
-    pub fn overlapsBall(self: Self, b: Ball2f) bool {
-        if (self.radius == 0 or b.radius == 0) return false;
-        return squaredSum(self.centre - b.centre) < (self.radius + b.radius) * (self.radius + b.radius);
+    /// Returns true if this ball is empty.
+    pub fn isEmpty(self: Self) bool {
+        return self.radius == 0;
     }
 
-    pub fn overlapsBox(self: Self, b: Box2f) bool {
-        // One way of doing this would be to do the following (might be a bit inefficient):
-        // - define d as the line joining the centres
-        // - check where the box's edges intersect d
-        // - overlap if the intersection point is within the ball's radius of its centre
-        _ = self;
-        _ = b;
-        return false;
+    /// Returns true if the two balls overlap.
+    pub fn overlapsOther(self: Self, other: Ball2f) bool {
+        if (self.radius == 0 or other.radius == 0) return false;
+        const r_sum = self.radius + other.radius;
+        return squaredSum(self.centre - other.centre) < r_sum * r_sum;
     }
 
-    pub fn overlapsBallsX8(self: Self, balls: [8]Ball2f) [8]bool {
-        const dx_vec = Vec8f{
-            balls[0].centre[0],
-            balls[1].centre[0],
-            balls[2].centre[0],
-            balls[3].centre[0],
-            balls[4].centre[0],
-            balls[5].centre[0],
-            balls[6].centre[0],
-            balls[7].centre[0],
-        } - @as(Vec8f, @splat(self.centre[0]));
-
-        const dy_vec = Vec8f{
-            balls[0].centre[1],
-            balls[1].centre[1],
-            balls[2].centre[1],
-            balls[3].centre[1],
-            balls[4].centre[1],
-            balls[5].centre[1],
-            balls[6].centre[1],
-            balls[7].centre[1],
-        } - @as(Vec8f, @splat(self.centre[1]));
-
-        const r_sums_vec = Vec8f{
-            self.radius + balls[0].radius,
-            self.radius + balls[1].radius,
-            self.radius + balls[2].radius,
-            self.radius + balls[3].radius,
-            self.radius + balls[4].radius,
-            self.radius + balls[5].radius,
-            self.radius + balls[6].radius,
-            self.radius + balls[7].radius,
-        };
-
-        // NOTE: Actually performs worse than the naive method when compiled with --release=fast
-        //       Using @sqrt was just as fast as using the inequality shown below
-        // return @sqrt(dx_vec * dx_vec + dy_vec * dy_vec) < r_sums_vec;
-        return dx_vec * dx_vec + dy_vec * dy_vec < r_sums_vec * r_sums_vec;
-    }
+    // One way of doing this would be to do the following (might be a bit inefficient):
+    // - define d as the line joining the centres
+    // - check where the box's edges intersect d
+    // - overlap if the intersection point is within the ball's radius of its centre
+    // pub fn overlapsBox(self: Self, b: Box2f) bool {
+    //     return false;
+    // }
 };
 
 /// An axis-aligned rectangular region in 2D Euclidean space.
 ///  I.e., the region B: = { b in R^2 : |c_y - b_y| < 0.5 * HW and |c_y - b_y| < 0.5 * HH }.
 pub const Box2f = struct {
     centre: Vec2f,
-    half_width: f32,
-    half_height: f32,
+    half_width: f32 = 0.0,
+    half_height: f32 = 0.0,
 
-    pub fn overlapsBox(self: Box2f, other: Box2f) bool {
+    // TODO: unfinished implementation - fix this!
+    pub fn getEncompassing(a: Box2f, b: Box2f) Box2f {
+        if (b.half_width == 0 or b.half_height == 0) return a; // a encompasses b
+        if (a.half_width == 0 or a.half_height == 0) return b; // b encompasses a
+        return .{
+            .centre = scaledVec(0.5, (a.centre + b.centre)),
+            .half_width = a.half_width + b.half_width,
+            .half_height = a.half_height + b.half_height,
+        };
+    }
+
+    /// Returns true if this box is empty.
+    pub fn isEmpty(self: Box2f) bool {
+        return self.half_width == 0 or self.half_height == 0;
+    }
+
+    /// Returns true if the two boxes overlap.
+    pub fn overlapsOther(self: Box2f, other: Box2f) bool {
         const d = self.centre - other.centre;
         const width_sum = self.half_width + other.half_width;
         const height_sum = self.half_height + other.half_height;
@@ -112,6 +86,14 @@ pub fn getRandUniform(min: f32, max: f32) f32 {
     return min + (max - min) * rng.random().float(f32);
 }
 
+pub inline fn asf32(x: anytype) f32 {
+    return @floatFromInt(x);
+}
+
+pub inline fn asu32(x: anytype) u32 {
+    return @intFromFloat(x);
+}
+
 /// Returns the Euclidean norm of the vector v.
 pub fn norm(v: anytype) f32 {
     return @sqrt(squaredSum(v));
@@ -122,6 +104,7 @@ pub fn squaredSum(v: anytype) f32 {
     return innerProd(v, v);
 }
 
+/// Computes the inner product of two vectors of f32s.
 pub fn innerProd(a: anytype, b: anytype) f32 {
     return @reduce(.Add, a * b);
 }
@@ -131,22 +114,16 @@ pub fn vecsEqual(a: anytype, b: anytype) bool {
     return @reduce(.And, a == b);
 }
 
-pub inline fn asf32(x: anytype) f32 {
-    return @floatFromInt(x);
-}
-
-pub inline fn asu32(x: anytype) u32 {
-    return @intFromFloat(x);
-}
-
 /// Returns a unit length vector in the same direction as v, or a zero vector if it has zero length.
-pub fn normalised2f(v: Vec2f) Vec2f {
+pub fn normalised(v: anytype) @TypeOf(v) {
     const n = norm(v);
-    return if (n > 0) scaledVec2f(1 / norm(v), v) else zero_2f;
+    return if (n > 0) scaledVec(1 / norm(v), v) else zero_2f;
 }
 
-pub fn scaledVec2f(alpha: f32, v: anytype) Vec2f {
-    return Vec2f{ alpha * v[0], alpha * v[1] };
+/// Returns a scaled version of the input vector.
+pub fn scaledVec(alpha: f32, v: anytype) @TypeOf(v) {
+    const alpha_vec: @TypeOf(v) = @splat(alpha);
+    return alpha_vec * v;
 }
 
 // solves for t that minimises || u + t * v ||
@@ -160,7 +137,7 @@ pub fn getMinDistSquared(pos_a: Vec2f, vel_a: Vec2f, pos_b: Vec2f, vel_b: Vec2f)
     const u = pos_a - pos_b;
     const v = vel_a - vel_b;
     const t = solveForMinDist(u, v);
-    const d = u + scaledVec2f(t, v);
+    const d = u + scaledVec(t, v);
     return squaredSum(d);
 }
 
@@ -170,7 +147,7 @@ pub fn getMinDistSquaredForInterval(pos_a: Vec2f, vel_a: Vec2f, pos_b: Vec2f, ve
     const v = vel_a - vel_b;
     var t = solveForMinDist(u, v);
     t = @max(t_min, @min(t, t_max));
-    const d = u + scaledVec2f(t, v);
+    const d = u + scaledVec(t, v);
     return squaredSum(d);
 }
 
@@ -243,31 +220,14 @@ test "check balls overlap" {
     const b3 = Ball2f{ .centre = Vec2f{ 1.0, 1.0 }, .radius = 0.4 };
     const b4 = Ball2f{ .centre = Vec2f{ 1.5, 0.0 }, .radius = 0.5 };
 
-    const check_1 = a.overlapsBall(b1);
+    const check_1 = a.overlapsOther(b1);
     try testing.expectEqual(true, check_1);
-    const check_2 = a.overlapsBall(b2);
+    const check_2 = a.overlapsOther(b2);
     try testing.expectEqual(true, check_2);
-    const check_3 = a.overlapsBall(b3);
+    const check_3 = a.overlapsOther(b3);
     try testing.expectEqual(false, check_3);
-    const check_4 = a.overlapsBall(b4);
+    const check_4 = a.overlapsOther(b4);
     try testing.expectEqual(false, check_4);
-}
-
-test "check balls overlap 8x" {
-    const a = Ball2f{ .centre = Vec2f{ 0, 0 }, .radius = 1.0 };
-    const balls = [_]Ball2f{
-        Ball2f{ .centre = Vec2f{ 0.5, 0.5 }, .radius = 0.1 },
-        Ball2f{ .centre = Vec2f{ 1.5, 0.0 }, .radius = 0.6 },
-        Ball2f{ .centre = Vec2f{ 1.0, 1.0 }, .radius = 0.4 },
-        Ball2f{ .centre = Vec2f{ 1.5, 0.0 }, .radius = 0.5 },
-        Ball2f{ .centre = Vec2f{ -0.8, -0.8 }, .radius = 0.1 },
-        Ball2f{ .centre = Vec2f{ -1.5, 0.0 }, .radius = 0.6 },
-        Ball2f{ .centre = Vec2f{ 1.0, 1.0 }, .radius = 0.5 },
-        Ball2f{ .centre = Vec2f{ 1.5, 0.0 }, .radius = 0.0 },
-    };
-
-    const check_result = a.overlapsBallsX8(balls);
-    try testing.expectEqual([8]bool{ true, true, false, false, false, true, true, false }, check_result);
 }
 
 test "boxes overlap" {
@@ -276,10 +236,10 @@ test "boxes overlap" {
     const b2 = Box2f{ .centre = Vec2f{ 0.625, 0.625 }, .half_width = 0.125, .half_height = 0.125 };
     const b3 = Box2f{ .centre = Vec2f{ 1.125, 1.125 }, .half_width = 0.375, .half_height = 0.375 };
     const b4 = Box2f{ .centre = Vec2f{ 1.625, 1.625 }, .half_width = 0.125, .half_height = 0.125 };
-    const check_1 = a.overlapsBox(b1);
-    const check_2 = a.overlapsBox(b2);
-    const check_3 = a.overlapsBox(b3);
-    const check_4 = a.overlapsBox(b4);
+    const check_1 = a.overlapsOther(b1);
+    const check_2 = a.overlapsOther(b2);
+    const check_3 = a.overlapsOther(b3);
+    const check_4 = a.overlapsOther(b4);
     try testing.expectEqual(true, check_1);
     try testing.expectEqual(true, check_2);
     try testing.expectEqual(true, check_3);
