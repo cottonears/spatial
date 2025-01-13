@@ -8,21 +8,16 @@ const os = std.os;
 const time = std.time;
 
 const Vec2f = core.Vec2f;
-const Vec3f = core.Vec3f;
-const Vec4f = core.Vec4f;
-const Vec6f = core.Vec6f;
-const Vec8f = core.Vec8f;
-const Vec12f = core.Vec12f;
-const Vec16f = core.Vec16f;
 const Ball2f = core.Ball2f;
 const Box2f = core.Box2f;
 const benchmark_len = 10000;
-const test_len = 300;
+const test_len = 1000;
 
 var num_trials: u16 = 10;
 var random_floats: [benchmark_len]f32 = undefined;
 var random_vecs: [benchmark_len]Vec2f = undefined;
 var random_balls: [benchmark_len]Ball2f = undefined;
+var random_boxes: [benchmark_len]Box2f = undefined;
 var random_data_generated = false;
 
 pub fn main() !void {
@@ -44,12 +39,12 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
     genRandomData();
     std.debug.print("Running all benchmarks for {} bodies...\n", .{benchmark_len});
     try benchmarkIndexing(allocator);
-    try benchmarkBallsOverlap(allocator);
-    benchmarkIntervalsOverlap();
+    try benchmarkSquareTree(allocator);
+    benchmarkOverlapChecks();
     std.debug.print("Benchmarks complete!\n", .{});
 }
 
-fn benchmarkBallsOverlap(allocator: std.mem.Allocator) !void {
+fn benchmarkSquareTree(allocator: std.mem.Allocator) !void {
     const tree_depth = 5;
     const TreeType = data.SquareTree(2, tree_depth, u6);
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
@@ -59,38 +54,54 @@ fn benchmarkBallsOverlap(allocator: std.mem.Allocator) !void {
     var overlap_count: u32 = 0;
 
     const t_0 = time.microTimestamp();
-    for (random_balls) |ball| _ = try qt.addBody(ball);
+    for (0..num_trials) |_| {
+        for (random_balls) |ball| _ = try qt.addBody(ball);
+    }
     const t_1 = time.microTimestamp();
-    qt.updateBounds();
+    for (0..num_trials) |_| {
+        qt.updateBounds();
+    }
     const t_2 = time.microTimestamp();
-    for (random_balls) |b| {
-        const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b);
-        overlap_count += @truncate(overlaps_found.len);
+    for (0..num_trials) |_| {
+        for (random_balls) |b| {
+            const overlaps_found = try qt.getOverlappingBodies(&overlap_buff, b);
+            overlap_count += @truncate(overlaps_found.len);
+        }
     }
     const t_3 = time.microTimestamp();
 
     std.debug.print(
-        "Overlapping balls benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} us.\n",
-        .{ overlap_count, t_1 - t_0, t_2 - t_1, t_3 - t_2 },
+        "Overlapping balls benchmark: found {} overlaps. Add took {} us, update took {} us, overlap checks took {} ms.\n",
+        .{ overlap_count, t_1 - t_0, t_2 - t_1, @divFloor(t_3 - t_2, 1000) },
     );
 }
 
-fn benchmarkIntervalsOverlap() void {
+fn benchmarkOverlapChecks() void {
     var overlap_count_1: u32 = 0;
+    var overlap_count_2: u32 = 0;
+
     const t_0 = time.microTimestamp();
-    for (random_balls) |b| {
-        const intervals_overlap = core.intervalsOverlap(
-            b.centre[0] - b.radius,
-            b.centre[0] + b.radius,
-            b.centre[1] - b.radius,
-            b.centre[1] + b.radius,
-        );
-        overlap_count_1 += if (intervals_overlap) 1 else 0;
+    const first_ball = random_balls[0];
+    for (0..num_trials) |_| {
+        for (random_balls) |b| {
+            const overlap = first_ball.overlapsBall(b);
+            overlap_count_1 += if (overlap) 1 else 0;
+        }
     }
     const t_1 = time.microTimestamp();
+
+    const first_box = random_boxes[0];
+    for (0..num_trials) |_| {
+        for (random_boxes) |b| {
+            const overlap = first_box.overlapsBox(b);
+            overlap_count_2 += if (overlap) 1 else 0;
+        }
+    }
+    const t_2 = time.microTimestamp();
+
     std.debug.print(
-        "Overlapping intervals benchmark: found {} overlaps. Method 1 took {} us.\n",
-        .{ overlap_count_1, t_1 - t_0 },
+        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 took {} us; method 2 took {} us.\n",
+        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1 },
     );
 }
 
@@ -119,8 +130,12 @@ fn genRandomData() void {
     for (0..benchmark_len) |i| {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
+        const radius = 0.01 * random_floats[i];
+        const half_width = if (i % 2 == 0) 0.7854 * radius else radius;
+        const half_height = if (i % 2 != 0) 0.7854 * radius else radius;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
-        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = 0.01 * random_floats[i] };
+        random_balls[i] = Ball2f{ .centre = random_vecs[i], .radius = radius, };
+        random_boxes[i] = Box2f{ .centre = random_vecs[i], .half_width = half_width, .half_height = half_height, };
     }
     random_data_generated = true;
 }
