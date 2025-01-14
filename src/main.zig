@@ -46,12 +46,14 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
-    const tree_depth = 5;
-    const TreeType = data.SquareTree(2, tree_depth, u6, Ball2f);
-    TreeType.printTypeInfo();
+    const TreeType = data.SquareTree(2, 5, u6, Ball2f);
+    var type_info_buff: [512]u8 = undefined;
+    const type_info = try TreeType.getTypeInfo(&type_info_buff);
+    std.debug.print("{s}", .{type_info});
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
+
     var overlap_buff: [benchmark_len]TreeType.BodyIndex = undefined;
     var overlap_count: u32 = 0;
 
@@ -80,9 +82,10 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
-    const tree_depth = 5;
-    const TreeType = data.SquareTree(2, tree_depth, u6, Box2f);
-    TreeType.printTypeInfo();
+    const TreeType = data.SquareTree(2, 5, u6, Box2f);
+    var type_info_buff: [512]u8 = undefined;
+    const type_info = try TreeType.getTypeInfo(&type_info_buff);
+    std.debug.print("{s}", .{type_info});
     const leaf_cap = 2 * benchmark_len / TreeType.num_nodes;
     var qt = try TreeType.init(allocator, leaf_cap, Vec2f{ 0, 0 }, 1.0);
     defer qt.deinit();
@@ -319,7 +322,7 @@ test "square tree" {
         }
         // draw all overlaps in a different colour
         for (overlaps_found) |overlap_index| {
-            const overlap_body = st.leaf_arrays[overlap_index.leaf_index].items[overlap_index.body_number];
+            const overlap_body = st.getBody(overlap_index);
             if (@reduce(.And, overlap_body.centre == query_body.centre)) continue; // assumed to be the same body
             try test_canvas.addCircle(testing.allocator, query_body.centre, query_body.radius, solid_styles[5]);
             try test_canvas.addCircle(testing.allocator, overlap_body.centre, overlap_body.radius, solid_styles[5]);

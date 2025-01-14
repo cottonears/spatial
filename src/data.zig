@@ -5,15 +5,14 @@ const Vec2f = calc.Vec2f;
 const Ball2f = volume.Ball2f;
 const Box2f = volume.Box2f;
 
-// TODO: Fix bug where tree will not clean up empty positions (maybe remove this feature altogether?)
 // IDEA: It might be worth inserting the root node at level 0 in the below struct.
 //       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 pub fn SquareTree(
-    comptime base_num: u8, // Each non-leaf node will have base * base children.
+    comptime base_num: u8, // Determines the number of children each non-leaf node has.
     comptime depth: u8, // The depth of the tree.
-    comptime ArrayIndex: type, // The type that will be used to index the arrays that store data in leaf nodes.
-    comptime VolumeType: anytype, // The type of volume that will be stored in the tree.
+    comptime DataIndex: type, // Type used to index data stored in leaf nodes.
+    comptime VolumeType: anytype, // The type of bounding volume that will be stored in the tree.
 ) type {
     return struct {
         allocator: std.mem.Allocator,
@@ -21,24 +20,23 @@ pub fn SquareTree(
         size: f32,
         size_per_level: [depth]f32,
         scale_per_level: [depth]f32,
-        bounds: [depth][]VolumeType = undefined,
-        leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined,
-        leaf_empty_positions: [num_leaves]ArrayIndex = undefined,
+        bounding_volumes: [depth][]VolumeType = undefined,
+        leaf_data: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined,
         num_bodies: usize = 0,
 
         pub const NodeIndex = std.math.IntFittingRange(0, num_leaves - 1);
         pub const BodyIndex = packed struct {
             leaf_index: NodeIndex,
-            body_number: ArrayIndex,
+            data_index: DataIndex,
         };
         const Self = @This();
 
-        comptime { // check the arguments are suppored
+        comptime { // check the arguments are supported
             if (!(base_num == 2 or base_num == 4 or base_num == 8 or base_num == 16)) @compileError("base value not supported");
             if (depth < 2) @compileError("depth must be greater than 1");
         }
         pub const nodes_in_level = calc.getPow2nSequence(base_num, 1, depth + 1);
-        pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
+        pub const num_leaves = nodes_in_level[depth - 1];
         pub const num_nodes = @reduce(.Add, nodes_in_level);
         pub const reverse_levels = calc.getReversedRange(u8, depth);
         const base: NodeIndex = @intCast(base_num);
@@ -48,28 +46,26 @@ pub fn SquareTree(
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
 
-            var bballs: [depth][]VolumeType = undefined;
+            var vols: [depth][]VolumeType = undefined;
             var size_per_lvl: [depth]f32 = undefined;
             var scale_per_lvl: [depth]f32 = undefined;
             var last_size = size;
             for (0..depth) |lvl| {
-                bballs[lvl] = try allocator.alloc(VolumeType, nodes_in_level[lvl]);
+                vols[lvl] = try allocator.alloc(VolumeType, nodes_in_level[lvl]);
                 size_per_lvl[lvl] = last_size / base;
                 scale_per_lvl[lvl] = 1.0 / size_per_lvl[lvl];
                 last_size = last_size / base;
             }
 
             var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined;
-            const leaf_empty_positions = [_]ArrayIndex{std.math.maxInt(ArrayIndex)} ** num_leaves;
             for (0..num_leaves) |i| {
                 leaf_arrays[i] = try std.ArrayListUnmanaged(VolumeType).initCapacity(allocator, leaf_capacity);
             }
 
             return Self{
                 .allocator = allocator,
-                .bounds = bballs,
-                .leaf_arrays = leaf_arrays,
-                .leaf_empty_positions = leaf_empty_positions,
+                .bounding_volumes = vols,
+                .leaf_data = leaf_arrays,
                 .origin = origin,
                 .size = size,
                 .size_per_level = size_per_lvl,
@@ -78,8 +74,8 @@ pub fn SquareTree(
         }
 
         pub fn deinit(self: *Self) void {
-            for (0..num_leaves) |i| self.leaf_arrays[i].deinit(self.allocator);
-            for (0..depth) |lvl| self.allocator.free(self.bounds[lvl]);
+            for (0..num_leaves) |i| self.leaf_data[i].deinit(self.allocator);
+            for (0..depth) |lvl| self.allocator.free(self.bounding_volumes[lvl]);
         }
 
         /// Gets the index of the identified node's predecessor (0 or more levels higher).
@@ -104,19 +100,20 @@ pub fn SquareTree(
             return buff[0..base_squared];
         }
 
-        // TODO: replace the info in this function with a string literal - it should be known at comptime.
-        /// Prints some useful information about this specific variety of square tree.
-        pub fn printTypeInfo() void {
-            std.debug.print(
-                "■ SquareTree({}, {}, {}, {}) info:\n",
-                .{ base, depth, ArrayIndex, VolumeType },
-            );
-            std.debug.print(
-                "   Body Index = {} + {} ({} bytes)\n",
-                .{ NodeIndex, ArrayIndex, @sizeOf(BodyIndex) },
-            );
-            std.debug.print("   Nodes per level: {any}\n", .{nodes_in_level});
-            std.debug.print("   Size: {d} kB\n", .{@sizeOf(Self) / 1000});
+        /// Gets a formatted string with some useful information about this variety of square tree.
+        pub fn getTypeInfo(buff: []u8) ![]u8 {
+            var buff_len: usize = 0;
+            buff_len += (try std.fmt.bufPrint(
+                buff,
+                "■ SquareTree({}, {}, {}, {}) info:\n  Body Index = {} + {} ({} bytes)\n",
+                .{ base, depth, DataIndex, VolumeType, NodeIndex, DataIndex, @sizeOf(BodyIndex) },
+            )).len;
+            buff_len += (try std.fmt.bufPrint(
+                buff[buff_len..],
+                "  Nodes per level: {any}\n    Struct size: {d} kB\n",
+                .{ nodes_in_level, @sizeOf(Self) / 1000 },
+            )).len;
+            return buff[0..buff_len];
         }
 
         /// Returns true if the specified point is within the region indexed by this tree, false otherwise.
@@ -125,7 +122,6 @@ pub fn SquareTree(
             return 0 <= d[0] and d[0] < self.size and 0 <= d[1] and d[1] < self.size;
         }
 
-        // TODO: see if the performance of the below function can be improved?
         /// Gets the index of the leaf node the query point lies within.
         /// Asserts the point is within the region covered by this tree.
         pub fn getLeafIndexForPoint(self: Self, point: Vec2f) NodeIndex {
@@ -171,48 +167,22 @@ pub fn SquareTree(
 
         /// Adds a body to the tree and returns its index.
         pub fn addBody(self: *Self, ball: VolumeType) !BodyIndex {
-            const i = self.getLeafIndexForPoint(ball.centre);
-            var body_num: ArrayIndex = undefined;
-            // if there's an empty position in the array, fi it
-            if (self.leaf_empty_positions[i] < self.leaf_arrays[i].items.len) {
-                body_num = self.leaf_empty_positions[i];
-                self.leaf_arrays[i].items[body_num] = ball;
-                // need to update the empty position for this array
-                self.leaf_empty_positions[i] = std.math.maxInt(ArrayIndex);
-                for (body_num..self.leaf_arrays[i].items.len) |j| {
-                    if (self.leaf_arrays[i].items[j].isEmpty()) {
-                        self.leaf_empty_positions[i] = @intCast(j);
-                        break;
-                    }
-                }
-            } else { // no empty positions in the array, append body at the end
-                // TODO: add the body to a neighbouring leaf if this leaf's array has reached capacity?
-                body_num = @intCast(self.leaf_arrays[i].items.len);
-                try self.leaf_arrays[i].append(self.allocator, ball);
-            }
+            const leaf = self.getLeafIndexForPoint(ball.centre);
+            const array_index: DataIndex = @intCast(self.leaf_data[leaf].items.len);
+            try self.leaf_data[leaf].append(self.allocator, ball);
             self.num_bodies += 1;
-            return BodyIndex{ .leaf_index = i, .body_number = @intCast(body_num) };
+            return BodyIndex{ .leaf_index = leaf, .data_index = array_index };
         }
 
         /// Gets the body at the specified index.
-        pub fn getBody(self: Self, body_index: BodyIndex) Ball2f {
-            return self.leaf_arrays[body_index.leaf_index].items[body_index.body_number];
-        }
-
-        /// Removes the body at the specified index.
-        /// The index may be re-used when another body is added to the same leaf node.
-        pub fn deleteBody(self: *Self, k: BodyIndex) void {
-            self.leaf_arrays[k.leaf_index].items[k.body_number].radius = 0;
-            if (k.body_number < self.leaf_empty_positions[k.leaf_index]) {
-                self.leaf_empty_positions[k.leaf_index] = k.body_number;
-            }
-            self.num_bodies -= 1;
+        pub fn getBody(self: Self, body_index: BodyIndex) VolumeType {
+            return self.leaf_data[body_index.leaf_index].items[body_index.data_index];
         }
 
         /// Removes all bodies from the tree.
         pub fn clearAllBodies(self: *Self) void {
-            self.leaf_empty_positions = [_]ArrayIndex{std.math.maxInt(ArrayIndex)} ** num_leaves;
-            for (0..num_leaves) |i| self.leaf_arrays[i].shrinkRetainingCapacity(0);
+            for (0..num_leaves) |i| self.leaf_data[i].shrinkRetainingCapacity(0);
+            self.num_bodies = 0;
         }
 
         /// Updates the bounding volumes within the tree.
@@ -221,20 +191,20 @@ pub fn SquareTree(
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
                         var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty ball
-                        for (0..self.leaf_arrays[i].items.len) |j| {
-                            ball = VolumeType.getEncompassing(ball, self.leaf_arrays[i].items[j]);
+                        for (0..self.leaf_data[i].items.len) |j| {
+                            ball = VolumeType.getEncompassing(ball, self.leaf_data[i].items[j]);
                         }
-                        self.bounds[lvl][i] = ball;
+                        self.bounding_volumes[lvl][i] = ball;
                     }
                 } else { // parent nodes
                     var child_index_buff: [base_squared]NodeIndex = undefined;
-                    for (0..self.bounds[lvl].len) |i| {
+                    for (0..self.bounding_volumes[lvl].len) |i| {
                         var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty ball
                         const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
                         for (child_indexes) |j| {
-                            ball = VolumeType.getEncompassing(ball, self.bounds[lvl + 1][j]);
+                            ball = VolumeType.getEncompassing(ball, self.bounding_volumes[lvl + 1][j]);
                         }
-                        self.bounds[lvl][i] = ball;
+                        self.bounding_volumes[lvl][i] = ball;
                     }
                 }
             }
@@ -250,7 +220,7 @@ pub fn SquareTree(
             // iterate through all parent nodes
             for (0..depth - 1) |lvl| {
                 for (search_buff[0..search_len]) |i| {
-                    if (query_vol.overlapsOther(self.bounds[lvl][i])) {
+                    if (query_vol.overlapsOther(self.bounding_volumes[lvl][i])) {
                         next_len += getChildIndexes(next_buff[next_len..], i).len;
                     }
                 }
@@ -261,11 +231,11 @@ pub fn SquareTree(
             // iterate through leaf nodes
             var buff_index: usize = 0;
             for (search_buff[0..search_len]) |leaf_index| {
-                for (self.leaf_arrays[leaf_index].items, 0..) |b, i| {
+                for (self.leaf_data[leaf_index].items, 0..) |b, i| {
                     if (query_vol.overlapsOther(b)) {
                         buff[buff_index] = BodyIndex{
                             .leaf_index = leaf_index,
-                            .body_number = @intCast(i),
+                            .data_index = @intCast(i),
                         };
                         buff_index += 1;
                     }
@@ -449,9 +419,10 @@ test "square tree add remove" {
 
     for (indexes, 0..) |b_index, i| {
         const get_body = qt.getBody(b_index);
-        qt.deleteBody(b_index);
         try testing.expectEqual(test_bodies[i].centre, get_body.centre);
         try testing.expectEqual(test_bodies[i].radius, get_body.radius);
     }
+
+    qt.clearAllBodies();
     try testing.expectEqual(0, qt.num_bodies);
 }
