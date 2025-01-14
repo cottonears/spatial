@@ -2,14 +2,15 @@ const std = @import("std");
 const core = @import("core.zig");
 const data = @import("data.zig");
 const svg = @import("svg.zig");
+const volume = @import("volume.zig");
 const fmt = std.fmt;
 const fs = std.fs;
 const os = std.os;
 const time = std.time;
 
 const Vec2f = core.Vec2f;
-const Ball2f = core.Ball2f;
-const Box2f = core.Box2f;
+const Ball2f = volume.Ball2f;
+const Box2f = volume.Box2f;
 const benchmark_len = 10000;
 const test_len = 1000;
 
@@ -35,7 +36,7 @@ pub fn main() !void {
 }
 
 fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
-    genRandomData();
+    genRandomData(0);
     std.debug.print("Running all benchmarks for {} bodies...\n", .{benchmark_len});
     try benchmarkIndexing(allocator);
     try benchmarkSquareTreeBalls(allocator);
@@ -161,8 +162,13 @@ fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     );
 }
 
-fn genRandomData() void {
-    for (0..benchmark_len) |i| random_floats[i] = core.getRandUniform(0, 1);
+fn getRandUniform(rng: *std.rand.Xoshiro256, min: f32, max: f32) f32 {
+    return min + (max - min) * rng.random().float(f32);
+}
+
+fn genRandomData(seed: usize) void {
+    var rng = std.rand.Xoshiro256.init(seed);
+    for (0..benchmark_len) |i| random_floats[i] = getRandUniform(&rng, 0, 1);
     for (0..benchmark_len) |i| {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
@@ -197,7 +203,7 @@ var test_canvas: svg.Canvas = undefined;
 
 fn initTesting(delete_out_dir: bool) !void {
     if (!random_data_generated) { // generate random data for tests
-        genRandomData();
+        genRandomData(0);
         var palette = try svg.RandomHslPalette.init(std.testing.allocator, palette_size);
         for (0.., palette.hsl_colours) |i, hsl| {
             dashed_styles[i] = svg.ShapeStyle{ .stroke_hsl = hsl, .stroke_dashed = true };

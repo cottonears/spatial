@@ -1,35 +1,11 @@
 const std = @import("std");
 const core = @import("core.zig");
+const volume = @import("volume.zig");
 const Vec2f = core.Vec2f;
-const Ball2f = core.Ball2f;
-const Box2f = core.Box2f;
+const Ball2f = volume.Ball2f;
+const Box2f = volume.Box2f;
 
-/// Generates the sequence S := { x ^ (2 * n) | n in [n_start, n_end) }.
-fn getPow2nSequence(comptime base: u8, comptime n_start: u8, comptime n_end: u8) @Vector(n_end - n_start, usize) {
-    std.debug.assert(n_end > n_start);
-    var seq: [n_end - n_start]usize = undefined;
-    inline for (n_start..n_end, 0..) |n, i| seq[i] = try std.math.powi(usize, base, 2 * n);
-    return seq;
-}
-
-/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
-fn getReversedRange(comptime T: type, len: T) [len]T {
-    var range: [len]T = undefined;
-    inline for (0..len) |i| range[i] = len - i - 1;
-    return range;
-}
-
-/// Gets a 'shift-amount' that can be used to effect an integer mutiply/divide with a left/right bit-shift operation.
-fn getMultDivShift(comptime number: comptime_int) comptime_int {
-    switch (number) { //
-        4 => return @as(u2, 2),
-        16 => return @as(u3, 4),
-        64 => return @as(u3, 6),
-        256 => return @as(u4, 8),
-        else => unreachable,
-    }
-}
-
+// TODO: Fix bug where tree will not clean up empty positions (maybe remove this altogether?)
 // IDEA: It might be worth inserting the root node at level 0 in the below struct.
 //       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
@@ -47,7 +23,7 @@ pub fn SquareTree(
         scale_per_level: [depth]f32,
         bounds: [depth][]VolumeType = undefined,
         leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined,
-        leaf_empty_positions: [num_leaves]ArrayIndex = undefined, // TODO: try using a collection here and see how it affects speed + memory usage
+        leaf_empty_positions: [num_leaves]ArrayIndex = undefined,
         num_bodies: usize = 0,
 
         pub const NodeIndex = std.math.IntFittingRange(0, num_leaves - 1);
@@ -57,18 +33,17 @@ pub fn SquareTree(
         };
         const Self = @This();
 
-        // check the parameters used are supported
-        comptime {
-            if (!(base == 2 or base == 4 or base == 8 or base == 16)) @compileError("base value not supported");
+        comptime { // check the arguments are suppored
+            if (!(base_num == 2 or base_num == 4 or base_num == 8 or base_num == 16)) @compileError("base value not supported");
             if (depth < 2) @compileError("depth must be greater than 1");
         }
-        pub const nodes_in_level = getPow2nSequence(base_num, 1, depth + 1);
+        pub const nodes_in_level = core.getPow2nSequence(base_num, 1, depth + 1);
         pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
         pub const num_nodes = @reduce(.Add, nodes_in_level);
-        pub const reverse_levels = getReversedRange(u8, depth);
+        pub const reverse_levels = core.getReversedRange(u8, depth);
         const base: NodeIndex = @intCast(base_num);
         const base_squared: NodeIndex = base * base;
-        const level_bitshift = getMultDivShift(base_squared);
+        const level_bitshift = core.getMultDivShift(base_squared);
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
@@ -107,17 +82,18 @@ pub fn SquareTree(
             for (0..depth) |lvl| self.allocator.free(self.bounds[lvl]);
         }
 
-        /// Converts a node index to the index of its predecessor (1 or more levels higher).
-        inline fn getPredeccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
+        /// Gets the index of the identified node's predecessor (0 or more levels higher).
+        fn getPredeccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
             return index >> @truncate(lvl_diff * level_bitshift);
         }
 
-        /// Converts a node index to the index its first successor (1 or more levels lower).
-        inline fn getSuccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
+        /// Gets the index of a successor of the identified node (0 or more levels lower).
+        /// The index returned is for the 'first-successor' at the specified level (i.e., the lowest index for a successor at that level).
+        fn getSuccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
             return index << @truncate(lvl_diff * level_bitshift);
         }
 
-        /// Gets the indexes of immediate children of the specified parent node.
+        /// Gets the indexes of all immediate children of the specified parent node.
         /// Assumes the provided parent_index does not refer to a leaf node.
         fn getChildIndexes(buff: []NodeIndex, parent_index: NodeIndex) []NodeIndex {
             std.debug.assert(buff.len >= base_squared);
@@ -128,6 +104,7 @@ pub fn SquareTree(
             return buff[0..base_squared];
         }
 
+        // TODO: replace the info in this function with a string literal - it should be known at comptime.
         /// Prints some useful information about this specific variety of square tree.
         pub fn printTypeInfo() void {
             std.debug.print(
@@ -163,19 +140,18 @@ pub fn SquareTree(
         }
 
         /// Gets the position of a point offset from the identified node's origin
-        /// NOTE: This function is slow due to integer divisions: don't use in performance critical code!.
+        /// NOTE: This function is slow due to integer divisions: don't use in performance critical code!
         pub fn getNodePoint(self: Self, level: u8, index: NodeIndex, x_offset: f32, y_offset: f32) !Vec2f {
             var point = self.origin;
             for (0..level + 1) |lvl| {
                 const lvl_index = getPredeccessorIndex(index, @intCast(level - lvl));
                 const lvl_size = self.size_per_level[lvl];
-                const row = (lvl_index / base) % base;
-                const col = lvl_index % base;
-                const x_lvl = if (lvl < level) core.asf32(col) else x_offset + core.asf32(col);
-                const y_lvl = if (lvl < level) core.asf32(row) else y_offset + core.asf32(row);
-                point += Vec2f{ lvl_size * x_lvl, lvl_size * y_lvl };
+                const row: f32 = @floatFromInt((lvl_index / base) % base);
+                const col: f32 = @floatFromInt(lvl_index % base);
+                point += Vec2f{ lvl_size * col, lvl_size * row };
             }
-            return point;
+            const offset = core.scaledVec(self.size_per_level[level], Vec2f{ x_offset, y_offset });
+            return point + offset;
         }
 
         /// Gets the origin point for the identified node.
