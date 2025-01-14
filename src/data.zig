@@ -1,11 +1,11 @@
 const std = @import("std");
-const core = @import("core.zig");
+const calc = @import("calc.zig");
 const volume = @import("volume.zig");
-const Vec2f = core.Vec2f;
+const Vec2f = calc.Vec2f;
 const Ball2f = volume.Ball2f;
 const Box2f = volume.Box2f;
 
-// TODO: Fix bug where tree will not clean up empty positions (maybe remove this altogether?)
+// TODO: Fix bug where tree will not clean up empty positions (maybe remove this feature altogether?)
 // IDEA: It might be worth inserting the root node at level 0 in the below struct.
 //       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
@@ -37,13 +37,13 @@ pub fn SquareTree(
             if (!(base_num == 2 or base_num == 4 or base_num == 8 or base_num == 16)) @compileError("base value not supported");
             if (depth < 2) @compileError("depth must be greater than 1");
         }
-        pub const nodes_in_level = core.getPow2nSequence(base_num, 1, depth + 1);
+        pub const nodes_in_level = calc.getPow2nSequence(base_num, 1, depth + 1);
         pub const num_leaves = nodes_in_level[depth - 1]; // number of nodes in the last (leaf) level
         pub const num_nodes = @reduce(.Add, nodes_in_level);
-        pub const reverse_levels = core.getReversedRange(u8, depth);
+        pub const reverse_levels = calc.getReversedRange(u8, depth);
         const base: NodeIndex = @intCast(base_num);
         const base_squared: NodeIndex = base * base;
-        const level_bitshift = core.getMultDivShift(base_squared);
+        const level_bitshift = std.math.log2(base_squared);
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
@@ -150,7 +150,7 @@ pub fn SquareTree(
                 const col: f32 = @floatFromInt(lvl_index % base);
                 point += Vec2f{ lvl_size * col, lvl_size * row };
             }
-            const offset = core.scaledVec(self.size_per_level[level], Vec2f{ x_offset, y_offset });
+            const offset = calc.scaledVec(self.size_per_level[level], Vec2f{ x_offset, y_offset });
             return point + offset;
         }
 

@@ -4,30 +4,19 @@ const std = @import("std");
 pub const Vec2f = @Vector(2, f32);
 const zero_2f = Vec2f{ 0, 0 };
 
+/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
+pub fn getReversedRange(comptime T: type, comptime len: T) [len]T {
+    var range: [len]T = undefined;
+    inline for (0..len) |i| range[i] = len - i - 1;
+    return range;
+}
+
 /// Generates the sequence S := { x ^ (2 * n) | n in [n_start, n_end) }.
 pub fn getPow2nSequence(comptime base: u8, comptime n_start: u8, comptime n_end: u8) @Vector(n_end - n_start, usize) {
     std.debug.assert(n_end > n_start);
     var seq: [n_end - n_start]usize = undefined;
     inline for (n_start..n_end, 0..) |n, i| seq[i] = try std.math.powi(usize, base, 2 * n);
     return seq;
-}
-
-/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
-pub fn getReversedRange(comptime T: type, len: T) [len]T {
-    var range: [len]T = undefined;
-    for (0..len) |i| range[i] = len - i - 1;
-    return range;
-}
-
-/// Gets a 'shift-amount' that can be used to effect an integer mutiply/divide with a left/right bit-shift operation.
-pub fn getMultDivShift(comptime number: comptime_int) comptime_int {
-    switch (number) { //
-        4 => return @as(u2, 2),
-        16 => return @as(u3, 4),
-        64 => return @as(u3, 6),
-        256 => return @as(u4, 8),
-        else => unreachable,
-    }
 }
 
 /// Returns the Euclidean norm of the vector v.

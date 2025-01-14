@@ -1,5 +1,5 @@
 const std = @import("std");
-const core = @import("core.zig");
+const calc = @import("calc.zig");
 const data = @import("data.zig");
 const svg = @import("svg.zig");
 const volume = @import("volume.zig");
@@ -8,7 +8,7 @@ const fs = std.fs;
 const os = std.os;
 const time = std.time;
 
-const Vec2f = core.Vec2f;
+const Vec2f = calc.Vec2f;
 const Ball2f = volume.Ball2f;
 const Box2f = volume.Box2f;
 const benchmark_len = 10000;
@@ -143,9 +143,8 @@ fn benchmarkOverlapChecks() void {
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
-    const tree_depth = 2;
-    const HexTree4 = data.SquareTree(4, tree_depth, u8, Ball2f);
-    var ht = try HexTree4.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
+    const SquareTree8x2 = data.SquareTree(8, 2, u8, Ball2f);
+    var ht = try SquareTree8x2.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
 
@@ -274,7 +273,7 @@ test "square tree" {
         const point = random_vecs[i];
         const index = st.getLeafIndexForPoint(point);
         const centre = try st.getNodeCentre(tree_depth - 1, index);
-        const dist = core.norm(point - centre);
+        const dist = calc.norm(point - centre);
         if (dist > max_dist_expected) {
             std.debug.print(
                 "{}. query point = {d:.3}; index = {X}, node-centre = {d:.3}, distance = {d:.4}\n",

@@ -1,6 +1,6 @@
 const std = @import("std");
-const core = @import("core.zig");
-const Vec2f = core.Vec2f;
+const calc = @import("calc.zig");
+const Vec2f = calc.Vec2f;
 
 /// A circular region in 2D Euclidean space.
 ///  I.e., the region B := { b in R^2 : ||c, b|| < R }.
@@ -12,13 +12,13 @@ pub const Ball2f = struct {
     /// Returns a ball that encompasses both input balls.
     pub fn getEncompassing(a: Ball2f, b: Ball2f) Ball2f {
         const d = a.centre - b.centre;
-        const dist = core.norm(d);
+        const dist = calc.norm(d);
         if (b.radius == 0 or (dist + b.radius < a.radius)) return a; // a encompasses b
         if (a.radius == 0 or (dist + a.radius < b.radius)) return b; // b encompasses a
         // otherwise, create a new circle that encompasses both a and b
         return .{
             .radius = 0.5 * (dist + a.radius + b.radius),
-            .centre = core.scaledVec(0.5, (a.centre + b.centre)) + core.scaledVec(0.5 * (a.radius - b.radius) / dist, d),
+            .centre = calc.scaledVec(0.5, (a.centre + b.centre)) + calc.scaledVec(0.5 * (a.radius - b.radius) / dist, d),
         };
     }
 
@@ -31,7 +31,7 @@ pub const Ball2f = struct {
     pub fn overlapsOther(self: Self, other: Ball2f) bool {
         if (self.radius == 0 or other.radius == 0) return false;
         const r_sum = self.radius + other.radius;
-        return core.squaredSum(self.centre - other.centre) < r_sum * r_sum;
+        return calc.squaredSum(self.centre - other.centre) < r_sum * r_sum;
     }
 
     // One way of doing this would be to do the following (might be a bit inefficient):
@@ -55,7 +55,7 @@ pub const Box2f = struct {
         if (b.half_width == 0 or b.half_height == 0) return a; // a encompasses b
         if (a.half_width == 0 or a.half_height == 0) return b; // b encompasses a
         return .{
-            .centre = core.scaledVec(0.5, (a.centre + b.centre)),
+            .centre = calc.scaledVec(0.5, (a.centre + b.centre)),
             .half_width = a.half_width + b.half_width,
             .half_height = a.half_height + b.half_height,
         };
