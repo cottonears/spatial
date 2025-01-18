@@ -187,62 +187,31 @@ pub fn SquareTree(
             }
         }
 
-        /// Gets the next body index after the provided one (skips any empty nodes).
-        /// Returns null if there are no more bodies.
-        pub fn getNextBodyIndex(self: Self, index: BodyIndex) ?BodyIndex {
-            if (index.data_index + 1 < self.leaf_data[index.leaf_index].items.len) {
-                return BodyIndex{
-                    .leaf_index = index.leaf_index,
-                    .data_index = index.data_index + 1,
-                };
-            }
-            if (index.leaf_index < num_leaves - 1) {
-                for ((index.leaf_index + 1)..num_leaves) |i| {
-                    if (self.leaf_data[i].items.len > 0) {
-                        return BodyIndex{ .leaf_index = @intCast(i), .data_index = 0 };
-                    }
-                }
-            }
-            return null;
-        }
-
-        /// Returns the indexes of all bodies (stored in nodes with index >= start_node) within the query volume.
-        pub fn findOverlapsWithVolume(self: Self, buff: []BodyIndex, vol: VolumeType, start_index: BodyIndex) []BodyIndex {
-            const start_node = start_index.leaf_index;
-            var search_buff: [num_leaves]NodeIndex = undefined;
-            const lvl_start = getPredeccessorIndex(start_node, depth - 1);
-            var search_slice = getChildIndexesAboveLimit(&search_buff, 0, lvl_start);
-            std.debug.print(
-                "start_node = {}; lvl_start = {}; search_buff = {any}\n",
-                .{ start_node, lvl_start, search_slice },
-            );
-            //for (0..base_squared) |i| search_buff[i] = @intCast(i);
-            //var search_len: usize = 0; // @intCast(base_squared);
-            var next_buff: [num_leaves]NodeIndex = undefined;
-            var next_len: usize = 0;
+        /// Returns the indexes of all bodies within the query volume whose index is > prior_index.
+        pub fn findOverlapsWithVolume(self: Self, buff: []BodyIndex, vol: VolumeType, prior_index: BodyIndex) []BodyIndex {
+            var buff_1: [num_leaves]NodeIndex = undefined;
+            var buff_2: [num_leaves]NodeIndex = undefined;
+            var search_slice = getChildIndexes(&buff_1, 0);
+            const start_node = prior_index.leaf_index;
             // iterate through all parent nodes
             for (0..depth - 1) |lvl| {
                 const lvl_diff: u8 = @truncate(depth - 1 - lvl);
-                //const lvl_start_node = getPredeccessorIndex(start_node, lvl_diff);
-                const child_start_node = getPredeccessorIndex(start_node, lvl_diff);
+                const lvl_start = getPredeccessorIndex(start_node, lvl_diff);
+                var next_slice: []NodeIndex = if (lvl % 2 == 0) buff_2[0..] else buff_1[0..];
+                var next_len: usize = 0;
                 for (search_slice) |i| {
-                    if (vol.overlapsOther(self.bounding_volumes[lvl][i])) {
-                        next_len += getChildIndexesAboveLimit(next_buff[next_len..], i, child_start_node).len;
+                    if (lvl_start <= i and vol.overlapsOther(self.bounding_volumes[lvl][i])) {
+                        next_len += getChildIndexes(next_slice[next_len..], i).len;
                     }
-                    // if (lvl_start_node <= i and vol.overlapsOther(self.bounding_volumes[lvl][i])) {
-                    //     next_len += getChildIndexes(next_buff[next_len..], i).len;
-                    // }
                 }
-                @memcpy(search_buff[0..next_len], next_buff[0..next_len]);
-                search_slice;
-                next_len = 0;
+                search_slice = next_slice[0..next_len];
             }
             // iterate through leaf nodes
             var buff_len: usize = 0;
-            for (search_buff[0..search_len]) |i| {
+            for (search_slice) |i| {
                 if (i < start_node) continue;
                 for (self.leaf_data[i].items, 0..) |b, j| {
-                    if (i == start_node and j < start_index.data_index) continue;
+                    if (i == start_node and j <= prior_index.data_index) continue;
                     if (vol.overlapsOther(b)) {
                         buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
                         buff_len += 1;
@@ -270,23 +239,6 @@ pub fn SquareTree(
                 buff[i] = first_child_index + @as(NodeIndex, @intCast(i));
             }
             return buff[0..base_squared];
-        }
-
-        fn getChildIndexesAboveLimit(buff: []NodeIndex, parent_index: NodeIndex, start_index: NodeIndex) []NodeIndex {
-            var child_indexes = getChildIndexes(buff, parent_index);
-            if (start_index <= child_indexes[0]) {
-                return child_indexes;
-            } else if (start_index > child_indexes[child_indexes.len - 1]) {
-                return &[0]NodeIndex{};
-            } else {
-                const offset = start_index - child_indexes[0];
-                const trimmed = child_indexes[offset..];
-                std.debug.print(
-                    "child_indexes = {}-{}, start_index = {}, offset = {}; trimmed = {any}\n",
-                    .{ child_indexes[0], child_indexes[child_indexes.len - 1], start_index, offset, trimmed },
-                );
-                return trimmed;
-            }
         }
     };
 }

@@ -100,9 +100,7 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
         for (random_balls, body_indexes) |b, i| {
-            const next_index = qt.getNextBodyIndex(i);
-            if (next_index == null) continue;
-            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, next_index.?);
+            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
             overlap_count_1 += @truncate(overlaps_found.len);
         }
     }
