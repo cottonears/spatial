@@ -99,15 +99,17 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
     }
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
-        for (body_indexes) |i| {
-            const overlaps_found = qt.findOverlapsFromIndex(&overlap_buff, i);
+        for (random_balls, body_indexes) |b, i| {
+            const next_index = qt.getNextBodyIndex(i);
+            if (next_index == null) continue;
+            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, next_index.?);
             overlap_count_1 += @truncate(overlaps_found.len);
         }
     }
     const t_3 = time.microTimestamp();
     for (0..num_trials) |_| {
         for (random_balls, body_indexes) |b, i| {
-            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i.leaf_index);
+            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
             overlap_count_2 += @truncate(overlaps_found.len);
         }
     }
@@ -152,8 +154,8 @@ fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
     }
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
-        for (body_indexes) |i| {
-            const overlaps_found = qt.findOverlapsFromIndex(&overlap_buff, i);
+        for (random_boxes, body_indexes) |b, i| {
+            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
             overlap_count += @truncate(overlaps_found.len);
         }
     }
@@ -194,7 +196,7 @@ fn genRandomData(seed: usize) void {
     for (0..benchmark_len) |i| {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
-        const radius = 0.01 * random_floats[i];
+        const radius = 0.001 * random_floats[i];
         const half_width = if (i % 2 == 0) 0.7854 * radius else radius;
         const half_height = if (i % 2 != 0) 0.7854 * radius else radius;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };

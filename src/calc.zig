@@ -4,10 +4,19 @@ const std = @import("std");
 pub const Vec2f = @Vector(2, f32);
 const zero_2f = Vec2f{ 0, 0 };
 
-/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
-pub fn getReversedRange(comptime T: type, comptime len: T) [len]T {
+/// Gets an array containing the range: 0, 1, ... len - 1.
+pub fn getRange(comptime T: type, comptime len: u24) [len]T {
+    @setEvalBranchQuota(len + 1);
     var range: [len]T = undefined;
-    inline for (0..len) |i| range[i] = len - i - 1;
+    for (0..len) |i| range[i] = @intCast(i);
+    return range;
+}
+
+/// Gets an array containing the reversed range: len - 1, len - 2, ... 0.
+pub fn getReversedRange(comptime T: type, comptime len: u24) [len]T {
+    @setEvalBranchQuota(len + 1);
+    var range: [len]T = undefined;
+    for (0..len) |i| range[i] = @intCast(len - i - 1);
     return range;
 }
 
