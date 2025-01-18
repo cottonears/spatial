@@ -1,9 +1,6 @@
 const std = @import("std");
 const calc = @import("calc.zig");
-const volume = @import("volume.zig");
 const Vec2f = calc.Vec2f;
-const Ball2f = volume.Ball2f;
-const Box2f = volume.Box2f;
 
 // IDEA: It might be worth inserting the root node at level 0 in the below struct.
 //       This could be useful for performing top-level chceks if multiple trees are used.
@@ -76,28 +73,6 @@ pub fn SquareTree(
         pub fn deinit(self: *Self) void {
             for (0..num_leaves) |i| self.leaf_data[i].deinit(self.allocator);
             for (0..depth) |lvl| self.allocator.free(self.bounding_volumes[lvl]);
-        }
-
-        /// Gets the index of the identified node's predecessor (0 or more levels higher).
-        fn getPredeccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
-            return index >> @truncate(lvl_diff * level_bitshift);
-        }
-
-        /// Gets the index of a successor of the identified node (0 or more levels lower).
-        /// The index returned is for the 'first-successor' at the specified level (i.e., the lowest index for a successor at that level).
-        fn getSuccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
-            return index << @truncate(lvl_diff * level_bitshift);
-        }
-
-        /// Gets the indexes of all immediate children of the specified parent node.
-        /// Assumes the provided parent_index does not refer to a leaf node.
-        fn getChildIndexes(buff: []NodeIndex, parent_index: NodeIndex) []NodeIndex {
-            std.debug.assert(buff.len >= base_squared);
-            const first_child_index = getSuccessorIndex(parent_index, 1);
-            for (0..base_squared) |i| {
-                buff[i] = first_child_index + @as(NodeIndex, @intCast(i));
-            }
-            return buff[0..base_squared];
         }
 
         /// Gets a formatted string with some useful information about this variety of square tree.
@@ -180,6 +155,7 @@ pub fn SquareTree(
         }
 
         /// Removes all bodies from the tree.
+        /// Does not update bounding volumes.
         pub fn clearAllBodies(self: *Self) void {
             for (0..num_leaves) |i| self.leaf_data[i].shrinkRetainingCapacity(0);
             self.num_bodies = 0;
@@ -198,7 +174,7 @@ pub fn SquareTree(
                     }
                 } else { // parent nodes
                     var child_index_buff: [base_squared]NodeIndex = undefined;
-                    for (0..self.bounding_volumes[lvl].len) |i| {
+                    for (0..nodes_in_level[lvl]) |i| {
                         var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty ball
                         const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
                         for (child_indexes) |j| {
@@ -210,8 +186,50 @@ pub fn SquareTree(
             }
         }
 
-        /// Retrieves the indexes of bodies that might overlap.
-        pub fn getOverlappingBodies(self: Self, buff: []BodyIndex, query_vol: VolumeType) ![]BodyIndex {
+        // TODO: rework this.
+        // Replace with a function that gets all overlapping index-pairs
+        /// Returns the indexes of all bodies (with index > query_index) that overlapped with the indexed body.
+        pub fn findOverlapsFromIndex(self: Self, buff: []BodyIndex, query_index: BodyIndex) []BodyIndex {
+            // first, check the other bodies stored under the leaf node.
+            const query_vol = self.getBody(query_index);
+            var buff_index: usize = 0;
+            const leaf_data_slice = self.leaf_data[query_index.leaf_index].items;
+            const leaf_data_start = query_index.data_index + 1;
+            if (leaf_data_start < leaf_data_slice.len) {
+                for (leaf_data_start..leaf_data_slice.len) |i| {
+                    if (query_vol.overlapsOther(leaf_data_slice[i])) {
+                        buff[buff_index] = BodyIndex{
+                            .leaf_index = query_index.leaf_index,
+                            .data_index = @intCast(i),
+                        };
+                        buff_index += 1;
+                    }
+                }
+            }
+            // finally, search the remaining nodes.
+            if (query_index.leaf_index < num_leaves - 1) {
+                const start_node: NodeIndex = query_index.leaf_index + 1;
+                buff_index += self.findOverlapsWithVolume(buff[buff_index..], query_vol, start_node).len;
+            }
+
+            return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
+        }
+
+        pub fn getLeafOverlaps(self: Self, buff: []BodyIndex, leaf_index: NodeIndex) []BodyIndex {
+            const num_bodies = self.leaf_data[leaf_index].items;
+            for (0..(num_bodies - 1)) |i| {
+                for ((i + 1)..num_bodies) |j| {
+                    // TODO: do something in here
+                    _ = i;
+                    _ = j;
+                }
+            }
+        }
+
+        // TODO: see if this can be made more efficient by applying start_node restriction to children
+        // do we also want to have an last_node restriction?
+        /// Returns the indexes of all bodies (stored in nodes with index >= start_node) within the query volume.
+        pub fn findOverlapsWithVolume(self: Self, buff: []BodyIndex, vol: VolumeType, start_node: NodeIndex) []BodyIndex {
             var search_buff: [num_leaves]NodeIndex = undefined;
             for (0..base_squared) |i| search_buff[i] = @intCast(i);
             var search_len: usize = @intCast(base_squared);
@@ -219,8 +237,10 @@ pub fn SquareTree(
             var next_len: usize = 0;
             // iterate through all parent nodes
             for (0..depth - 1) |lvl| {
+                const lvl_diff: u8 = @truncate(depth - 1 - lvl);
+                const lvl_start_node = getPredeccessorIndex(start_node, lvl_diff);
                 for (search_buff[0..search_len]) |i| {
-                    if (query_vol.overlapsOther(self.bounding_volumes[lvl][i])) {
+                    if (lvl_start_node <= i and vol.overlapsOther(self.bounding_volumes[lvl][i])) {
                         next_len += getChildIndexes(next_buff[next_len..], i).len;
                     }
                 }
@@ -229,19 +249,37 @@ pub fn SquareTree(
                 next_len = 0;
             }
             // iterate through leaf nodes
-            var buff_index: usize = 0;
-            for (search_buff[0..search_len]) |leaf_index| {
-                for (self.leaf_data[leaf_index].items, 0..) |b, i| {
-                    if (query_vol.overlapsOther(b)) {
-                        buff[buff_index] = BodyIndex{
-                            .leaf_index = leaf_index,
-                            .data_index = @intCast(i),
-                        };
-                        buff_index += 1;
+            var buff_len: usize = 0;
+            for (search_buff[0..search_len]) |i| {
+                if (i < start_node) continue;
+                for (self.leaf_data[i].items, 0..) |b, j| {
+                    if (vol.overlapsOther(b)) {
+                        buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
+                        buff_len += 1;
                     }
                 }
             }
-            return if (buff_index > 0) buff[0..buff_index] else &[0]BodyIndex{};
+            return if (buff_len > 0) buff[0..buff_len] else &[0]BodyIndex{};
+        }
+
+        /// Gets the index of the identified node's predecessor (0 or more levels higher).
+        fn getPredeccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
+            return index >> @truncate(lvl_diff * level_bitshift);
+        }
+
+        /// Gets the index of a successor of the identified node (0 or more levels lower).
+        /// The index returned is for the 'firstsuccessor' at the specified level (i.e., the lowest index for a successor at that level).
+        fn getSuccessorIndex(index: NodeIndex, lvl_diff: u8) NodeIndex {
+            return index << @truncate(lvl_diff * level_bitshift);
+        }
+
+        /// Gets the indexes of all immediate children of the specified parent node.
+        inline fn getChildIndexes(buff: []NodeIndex, parent_index: NodeIndex) []NodeIndex {
+            const first_child_index = parent_index << level_bitshift;
+            for (0..base_squared) |i| {
+                buff[i] = first_child_index + @as(NodeIndex, @intCast(i));
+            }
+            return buff[0..base_squared];
         }
     };
 }
@@ -259,6 +297,9 @@ pub fn SquareTree(
 // allowing us to ignore later potential collisions.
 
 const testing = std.testing;
+const volume = @import("volume.zig");
+const Ball2f = volume.Ball2f;
+const Box2f = volume.Box2f;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
@@ -348,7 +389,7 @@ test "hex tree overlap ball" {
 
     const a = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.4 };
     const b = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 };
-    const c = Ball2f{ .centre = Vec2f{ 0.2, 0.9 }, .radius = 0.1 };
+    const c = Ball2f{ .centre = Vec2f{ 0.2, 0.7 }, .radius = 0.1 };
     const index_a = try tree.addBody(a);
     const index_b = try tree.addBody(b);
     const index_c = try tree.addBody(c);
@@ -356,19 +397,19 @@ test "hex tree overlap ball" {
 
     var index_buff: [8]HexTree2.BodyIndex = undefined;
     const query_region_1 = Ball2f{ .centre = Vec2f{ 0.9, 0.5 }, .radius = 0.1 };
-    const overlap_indexes_1 = try tree.getOverlappingBodies(&index_buff, query_region_1);
+    const overlap_indexes_1 = tree.findOverlapsWithVolume(&index_buff, query_region_1, 0);
     try testing.expectEqual(0, overlap_indexes_1.len);
     try testing.expectEqual(false, index_a.leaf_index == index_b.leaf_index);
     try testing.expectEqual(false, index_a.leaf_index == index_c.leaf_index);
     try testing.expectEqual(false, index_b.leaf_index == index_c.leaf_index);
 
     const query_region_2 = Ball2f{ .centre = Vec2f{ -3.5, -3.5 }, .radius = 1.0 };
-    const overlap_indexes_2 = try tree.getOverlappingBodies(&index_buff, query_region_2);
+    const overlap_indexes_2 = tree.findOverlapsWithVolume(&index_buff, query_region_2, 0);
     try testing.expectEqual(0, overlap_indexes_2.len);
 
     const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
-    const overlap_3_bfs = try tree.getOverlappingBodies(&index_buff, query_region_3);
-    try testing.expectEqual(3, overlap_3_bfs.len);
+    const overlap_indexes_3 = tree.findOverlapsWithVolume(&index_buff, query_region_3, 0);
+    try testing.expectEqual(3, overlap_indexes_3.len);
 }
 
 test "hex tree overlap box" {
@@ -387,7 +428,7 @@ test "hex tree overlap box" {
 
     var index_buff: [8]HexTree2.BodyIndex = undefined;
     const query_region_1 = Box2f{ .centre = Vec2f{ 0.9, 0.5 }, .half_width = 0.1, .half_height = 0.1 };
-    const overlap_indexes_1 = try tree.getOverlappingBodies(&index_buff, query_region_1);
+    const overlap_indexes_1 = tree.findOverlapsWithVolume(&index_buff, query_region_1, 0);
     try testing.expectEqual(0, overlap_indexes_1.len);
     try testing.expectEqual(false, index_a.leaf_index == index_b.leaf_index);
     try testing.expectEqual(false, index_a.leaf_index == index_c.leaf_index);
