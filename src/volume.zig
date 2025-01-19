@@ -2,6 +2,9 @@ const std = @import("std");
 const calc = @import("calc.zig");
 const Vec2f = calc.Vec2f;
 
+// TODO: Implement overlapsOther for balls + boxes.
+//       We can probably use anytype and do a comptime switch?
+
 /// A circular region in 2D Euclidean space.
 ///  I.e., the region B := { b in R^2 : ||c, b|| < R }.
 pub const Ball2f = struct {
@@ -49,29 +52,40 @@ pub const Box2f = struct {
     centre: Vec2f,
     half_width: f32 = 0.0,
     half_height: f32 = 0.0,
+    const Self = @This();
 
-    // TODO: unfinished implementation - fix this!
     pub fn getEncompassing(a: Box2f, b: Box2f) Box2f {
         if (b.half_width == 0 or b.half_height == 0) return a; // a encompasses b
         if (a.half_width == 0 or a.half_height == 0) return b; // b encompasses a
+        const x_min = @min(a.centre[0] - a.half_width, b.centre[0] - b.half_width);
+        const x_max = @max(a.centre[0] + a.half_width, b.centre[0] + b.half_width);
+        const y_min = @min(a.centre[1] - a.half_height, b.centre[1] - b.half_height);
+        const y_max = @max(a.centre[1] + a.half_height, b.centre[1] + b.half_height);
+        const half_width = 0.5 * (x_max - x_min);
+        const half_height = 0.5 * (y_max - y_min);
         return .{
-            .centre = calc.scaledVec(0.5, (a.centre + b.centre)),
-            .half_width = a.half_width + b.half_width,
-            .half_height = a.half_height + b.half_height,
+            .centre = Vec2f{ x_min + half_width, y_min + half_height },
+            .half_width = half_width,
+            .half_height = half_height,
         };
     }
 
     /// Returns true if this box is empty.
-    pub fn isEmpty(self: Box2f) bool {
+    pub fn isEmpty(self: Self) bool {
         return self.half_width == 0 or self.half_height == 0;
     }
 
     /// Returns true if the two boxes overlap.
-    pub fn overlapsOther(self: Box2f, other: Box2f) bool {
+    pub fn overlapsOther(self: Self, other: Box2f) bool {
         const d = self.centre - other.centre;
         const width_sum = self.half_width + other.half_width;
         const height_sum = self.half_height + other.half_height;
         return @abs(d[0]) < width_sum and @abs(d[1]) < height_sum;
+    }
+
+    pub fn getCorners(self: Self) [2]Vec2f {
+        const offset = Vec2f{ self.half_width, self.half_height };
+        return [2]Vec2f{ self.centre - offset, self.centre + offset };
     }
 };
 
