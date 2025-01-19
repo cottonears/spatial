@@ -14,7 +14,6 @@ pub const Canvas = struct {
     height: f32,
     width: f32,
     scale: f32,
-    offset: Vec2f,
     str: std.ArrayList(u8),
     //palette: RandomHslPalette = undefined,
     const Self = @This();
@@ -24,7 +23,6 @@ pub const Canvas = struct {
             .height = height,
             .width = width,
             .scale = scale,
-            .offset = Vec2f{ 0.5 * width, 0.5 * height },
             .str = try std.ArrayList(u8).initCapacity(allocator, 10000),
             //.palette = RandomHslPalette.initDefault(),
         };
@@ -35,7 +33,7 @@ pub const Canvas = struct {
     }
 
     fn getCanvasCoords(self: Self, v: Vec2f) Vec2f {
-        return self.offset + Vec2f{ self.scale * v[0], self.scale * v[1] };
+        return Vec2f{ self.scale * v[0], self.scale * v[1] };
     }
 
     pub fn addLine(self: *Self, allocator: mem.Allocator, start: Vec2f, end: Vec2f, style: ShapeStyle) !void {
@@ -57,7 +55,7 @@ pub const Canvas = struct {
         var sbuff: [256]u8 = undefined;
         const element_str = try std.fmt.allocPrint(
             allocator,
-            "\n<rect x=\"{d:.3}\" y=\"{d:.3}\" width=\"{d:.3}\" height=\"{d:.3}\" {s}/>",
+            "\n<rect x=\"{d:.3}\" y=\"{d:.3}\" width=\"{d:.3}\" height=\"{d:.3}\" {s}/>", //style=\"overflow: visible\"
             .{ start_c[0], start_c[1], diff_c[0], diff_c[1], try style.getElementString(&sbuff) },
         );
         defer allocator.free(element_str);
@@ -119,8 +117,8 @@ pub const Canvas = struct {
     pub fn getSvg(self: Self, allocator: mem.Allocator) ![]u8 {
         const svg_start = try std.fmt.allocPrint(
             allocator,
-            "<svg width=\"{d:.3}\" height=\"{d:.3}\" xmlns=\"http://www.w3.org/2000/svg\">",
-            .{ self.width, self.height },
+            "<svg viewBox=\"{d} {d} {d} {d}\" style=\"border:1px solid black\" xmlns=\"http://www.w3.org/2000/svg\">",
+            .{ -5, -5, self.width + 5, self.height + 5 },
         );
         defer allocator.free(svg_start);
 
@@ -153,7 +151,7 @@ pub const ShapeStyle = struct {
     fill_opacity: f32 = 1.0,
     stroke_active: bool = true,
     stroke_hsl: [3]u9 = undefined,
-    stroke_width: u4 = 2,
+    stroke_width: u4 = 1,
     stroke_opacity: f32 = 1.0,
     stroke_dashed: bool = false,
 
