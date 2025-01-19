@@ -2,8 +2,6 @@ const std = @import("std");
 const calc = @import("calc.zig");
 const Vec2f = calc.Vec2f;
 
-// IDEA: It might be worth inserting the root node at level 0 in the below struct.
-//       This could be useful for performing top-level chceks if multiple trees are used.
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 pub fn SquareTree(
     comptime base_num: u8, // Each node has base_num * base_num children.
@@ -25,7 +23,7 @@ pub fn SquareTree(
         comptime {
             if (!(base_num == 2 or base_num == 4 or base_num == 8 or base_num == 16)) @compileError("unsupported base_num");
             if (tree_depth < 2) @compileError("depth must be greater than 1");
-            if (base_num * tree_depth > 20) @compileError("base_num * depth exceeds limit (20)"); // things get seg-faulty above this limit
+            if (base_num * tree_depth > 20) @compileError("base_num * depth exceeds limit (20)"); // things get seg-faulty above this limit =(
         }
 
         pub const NodeIndex = std.math.IntFittingRange(0, num_leaves - 1);
@@ -89,7 +87,7 @@ pub fn SquareTree(
             )).len;
             buff_len += (try std.fmt.bufPrint(
                 buff[buff_len..],
-                "  Nodes per level: {any}\n    Struct size: {d} kB\n",
+                "  Nodes per level: {any}\n  Struct size: {d} kB\n",
                 .{ nodes_in_level, @sizeOf(Self) / 1000 },
             )).len;
             return buff[0..buff_len];
@@ -214,7 +212,7 @@ pub fn SquareTree(
             // iterate through leaf nodes
             var buff_len: usize = 0;
             for (search_slice) |i| {
-                for (self.leaf_data[i].items, 0..) |b, j| {
+                for (0.., self.leaf_data[i].items) |j, b| {
                     if (query_vol.overlapsOther(b)) {
                         buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
                         buff_len += 1;
@@ -473,10 +471,10 @@ test "square tree add remove" {
     };
 
     var indexes: [3]QuadTree.BodyIndex = undefined;
-    for (test_bodies, 0..) |b, i| indexes[i] = try qt.addBody(b);
+    for (0.., test_bodies) |i, b| indexes[i] = try qt.addBody(b);
     try testing.expectEqual(3, qt.num_bodies);
 
-    for (indexes, 0..) |b_index, i| {
+    for (0.., indexes) |i, b_index| {
         const get_body = qt.getBody(b_index) orelse unreachable;
         try testing.expectEqual(test_bodies[i].centre, get_body.centre);
         try testing.expectEqual(test_bodies[i].radius, get_body.radius);
