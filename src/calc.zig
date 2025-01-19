@@ -28,6 +28,11 @@ pub fn getPow2nSequence(comptime base: u8, comptime n_start: u8, comptime n_end:
     return seq;
 }
 
+/// Converts an int to a 32 bit float. Saves a bit of typing.
+pub fn asf32(x: anytype) f32 {
+    return @floatFromInt(x);
+}
+
 /// Returns the Euclidean norm of the vector v.
 pub fn norm(v: anytype) f32 {
     return @sqrt(squaredSum(v));
