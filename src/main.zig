@@ -11,7 +11,7 @@ const time = std.time;
 const Vec2f = calc.Vec2f;
 const Ball2f = volume.Ball2f;
 const Box2f = volume.Box2f;
-const benchmark_len = 50000;
+const benchmark_len = 100000;
 const test_len = 200;
 
 var num_trials: u16 = 10;
@@ -129,7 +129,7 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
-    const TreeType = data.SquareTree(2, 5, u8, Box2f);
+    const TreeType = data.SquareTree(2, 6, u8, Box2f);
     var type_info_buff: [512]u8 = undefined;
     const type_info = try TreeType.getTypeInfo(&type_info_buff);
     std.debug.print("{s}", .{type_info});
@@ -194,7 +194,7 @@ fn genRandomData(seed: usize) void {
     for (0..benchmark_len) |i| {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
-        const radius = 0.01 * random_floats[i];
+        const radius = 0.001 * random_floats[i];
         const half_width = if (i % 2 == 0) 0.7854 * radius else radius;
         const half_height = if (i % 2 != 0) 0.7854 * radius else radius;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
@@ -222,6 +222,8 @@ const tolerance = 0.00001;
 var dashed_styles: [palette_size]svg.ShapeStyle = undefined;
 var solid_styles: [palette_size]svg.ShapeStyle = undefined;
 var test_canvas: svg.Canvas = undefined;
+const GridType = data.SquareTree(4, 2, u16, Ball2f);
+var test_grid: GridType = undefined;
 
 fn initTesting(delete_out_dir: bool) !void {
     if (!random_data_generated) { // generate random data for tests
@@ -239,18 +241,31 @@ fn initTesting(delete_out_dir: bool) !void {
         try cwd.deleteTree(out_dir_name);
         try cwd.makeDir(out_dir_name);
     }
-    // always set up a canvas for drawing images on
+    // create new canvas + grid
     test_canvas = try svg.Canvas.init(std.testing.allocator, canvas_width, canvas_height, canvas_scale);
+    test_grid = try GridType.init(testing.allocator, 16, Vec2f{ 0, 0 }, 1.0);
 }
 
 fn deinitTesting() void {
     test_canvas.deinit();
+    test_grid.deinit();
 }
 
-test "encompassing balls" {
+fn getNodeLabel(buff: []u8, lvl: u8, index: u32) ![]const u8 {
+    return switch (lvl) {
+        0 => try std.fmt.bufPrint(buff, "{X:0>1}", .{index}),
+        1 => try std.fmt.bufPrint(buff, "{X:0>2}", .{index}),
+        2 => try std.fmt.bufPrint(buff, "{X:0>3}", .{index}),
+        3 => try std.fmt.bufPrint(buff, "{X:0>4}", .{index}),
+        4 => try std.fmt.bufPrint(buff, "{X:0>5}", .{index}),
+        else => unreachable,
+    };
+}
+
+test "draw encompassing balls" {
     try initTesting(true);
     defer deinitTesting();
-    for (0..test_len / 10) |i| {
+    for (0..test_len / 50) |i| {
         const a = Ball2f{ .centre = random_vecs[i], .radius = @abs(0.5 * random_floats[i]) };
         const b = Ball2f{ .centre = random_vecs[i + 1], .radius = @abs(0.5 * random_floats[i + 1]) };
         const c = Ball2f.getEncompassing(a, b);
@@ -268,34 +283,69 @@ test "encompassing balls" {
     }
 }
 
-fn getNodeLabel(buff: []u8, lvl: u8, index: u32) ![]const u8 {
-    return switch (lvl) {
-        0 => try std.fmt.bufPrint(buff, "{X:0>1}", .{index}),
-        1 => try std.fmt.bufPrint(buff, "{X:0>2}", .{index}),
-        2 => try std.fmt.bufPrint(buff, "{X:0>3}", .{index}),
-        3 => try std.fmt.bufPrint(buff, "{X:0>4}", .{index}),
-        4 => try std.fmt.bufPrint(buff, "{X:0>5}", .{index}),
-        else => unreachable,
-    };
-}
-
-test "square tree integration test" {
+test "draw test grid" {
     try initTesting(false);
     defer deinitTesting();
-    const base_num = 4;
-    const tree_depth = 2;
-    const TreeType = data.SquareTree(base_num, tree_depth, u16, Ball2f);
-    var st = try TreeType.init(testing.allocator, 2, Vec2f{ 0, 0 }, 1.0);
-    defer st.deinit();
 
-    // check the random points are binned correctly
-    const leaf_size = st.size_per_level[tree_depth - 1];
+    // create an svg canvas depicting the grid structure
+    var text_buff: [16]u8 = undefined;
+    for (GridType.reverse_levels) |lvl| {
+        var style = solid_styles[(2 * lvl) % palette_size];
+        style.stroke_width = @truncate(GridType.depth - lvl);
+        const font_size: u8 = 8 + 8 * (GridType.depth - lvl);
+        const lvl_end_index = GridType.nodes_in_level[lvl];
+        for (0..lvl_end_index) |i| {
+            const index: GridType.NodeIndex = @intCast(i);
+            const node_origin = try test_grid.getNodeOrigin(lvl, index);
+            const node_centre = try test_grid.getNodeCentre(lvl, index);
+            const node_corner = try test_grid.getNodeCorner(lvl, index);
+            const node_label = try getNodeLabel(&text_buff, lvl, index);
+            try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
+            try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
+        }
+    }
+
+    //  add some data to the test grid and record indexes of all bodies that overlap with others
+    var body_indexes: [test_len]GridType.BodyIndex = undefined;
+    for (0..test_len) |i| body_indexes[i] = try test_grid.addBody(random_balls[i]);
+    test_grid.updateBounds();
+    var overlap_set = std.AutoHashMap(GridType.BodyIndex, void).init(testing.allocator);
+    defer overlap_set.deinit();
+    for (random_balls[0..test_len], body_indexes) |b, i| {
+        var overlap_buff: [test_len]GridType.BodyIndex = undefined;
+        const overlaps_found = test_grid.findOverlapsAfterIndex(&overlap_buff, b, i);
+        if (overlaps_found.len == 0) continue;
+        try overlap_set.put(i, {});
+        for (overlaps_found) |j| try overlap_set.put(j, {});
+    }
+
+    // draw circles on the canvas; write SVG file.
+    for (body_indexes) |i| {
+        const body = test_grid.getBody(i) orelse unreachable;
+        const style = if (overlap_set.contains(i)) solid_styles[5] else solid_styles[7];
+        try test_canvas.addCircle(testing.allocator, body.centre, body.radius, style);
+    }
+    var fname_buff: [128]u8 = undefined;
+    const fpath = try fmt.bufPrint(
+        &fname_buff,
+        "{s}/square-tree-{}-{}.html",
+        .{ out_dir_name, GridType.base, GridType.depth },
+    );
+    try test_canvas.writeHtml(testing.allocator, fpath, true);
+}
+
+test "integration test 1" {
+    try initTesting(false);
+    defer deinitTesting();
+
+    // check the random points are indexed correctly
+    const leaf_size = test_grid.size_per_level[GridType.depth - 1];
     const max_dist_expected = 0.5 * @sqrt(2 * (leaf_size * leaf_size));
     var max_dist_found: f32 = 0.0;
     for (0..test_len) |i| {
         const point = random_vecs[i];
-        const index = st.getLeafIndexForPoint(point);
-        const centre = try st.getNodeCentre(tree_depth - 1, index);
+        const index = test_grid.getLeafIndexForPoint(point);
+        const centre = try test_grid.getNodeCentre(GridType.depth - 1, index);
         const dist = calc.norm(point - centre);
         if (dist > max_dist_expected) {
             std.debug.print(
@@ -311,61 +361,38 @@ test "square tree integration test" {
     );
     try testing.expect(max_dist_found < max_dist_expected + tolerance);
 
-    // TODO: separate the below into a helper function?
-    // create an svg image depicting the grid structure of the tree
-    var text_buff: [16]u8 = undefined;
-    for (TreeType.reverse_levels) |lvl| {
-        var style = solid_styles[(2 * lvl) % palette_size];
-        style.stroke_width = @truncate(tree_depth - lvl);
-        const font_size: u8 = 8 + 8 * (tree_depth - lvl);
-        const lvl_end_index = TreeType.nodes_in_level[lvl];
-        for (0..lvl_end_index) |i| {
-            const index: TreeType.NodeIndex = @intCast(i);
-            const node_origin = try st.getNodeOrigin(lvl, index);
-            const node_centre = try st.getNodeCentre(lvl, index);
-            const node_corner = try st.getNodeCorner(lvl, index);
-            const node_label = try getNodeLabel(&text_buff, lvl, index);
-            try test_canvas.addRectangle(testing.allocator, node_origin, node_corner, style);
-            try test_canvas.addText(testing.allocator, node_centre, node_label, font_size, style.stroke_hsl);
-        }
-    }
+    // store some random points in the grid
+    var body_indexes: [test_len]GridType.BodyIndex = undefined;
+    for (0..test_len) |i| body_indexes[i] = try test_grid.addBody(random_balls[i]);
+    test_grid.updateBounds();
+
     // find the overlapping bodies and record their indexes
-    var overlap_set_1 = std.AutoHashMap(TreeType.BodyIndex, void).init(testing.allocator);
+    var overlap_set_1 = std.AutoHashMap(GridType.BodyIndex, void).init(testing.allocator);
     defer overlap_set_1.deinit();
-    var body_indexes: [test_len]TreeType.BodyIndex = undefined;
-    var buff: [benchmark_len / 8]TreeType.BodyIndex = undefined;
-    for (0..test_len) |i| body_indexes[i] = try st.addBody(random_balls[i]);
-    st.updateBounds();
     for (random_balls[0..test_len], body_indexes) |b, i| {
-        const overlaps_found = st.findOverlapsAfterIndex(&buff, b, i);
+        var buff: [test_len]GridType.BodyIndex = undefined;
+        const overlaps_found = test_grid.findOverlapsAfterIndex(&buff, b, i);
         if (overlaps_found.len > 0) {
             try overlap_set_1.put(i, {});
             for (overlaps_found) |j| try overlap_set_1.put(j, {});
         }
     }
 
-    // add circles to the canvas; write SVG file.
-    for (body_indexes) |i| {
-        const body = st.getBody(i) orelse unreachable;
-        const style = if (overlap_set_1.contains(i)) solid_styles[5] else solid_styles[7];
-        try test_canvas.addCircle(testing.allocator, body.centre, body.radius, style);
-    }
-    var fname_buff: [128]u8 = undefined;
-    const fpath = try fmt.bufPrint(&fname_buff, "{s}/square-tree-{}-{}.html", .{ out_dir_name, base_num, tree_depth });
-    try test_canvas.writeHtml(testing.allocator, fpath, true);
-
-    // cross-check the overlaps are consistent using the alternate overlap function
-    var overlap_set_2 = std.AutoHashMap(TreeType.BodyIndex, void).init(testing.allocator);
+    // find overlaps using the alternative function
+    var overlap_set_2 = std.AutoHashMap(GridType.BodyIndex, void).init(testing.allocator);
     defer overlap_set_2.deinit();
     for (random_balls[0..test_len], body_indexes) |b, i| {
-        const overlaps_found = st.findOverlaps(&buff, b);
+        var buff: [test_len]GridType.BodyIndex = undefined;
+        const overlaps_found = test_grid.findOverlaps(&buff, b);
         if (overlaps_found.len > 0) {
             for (overlaps_found) |j| {
-                if (i.leaf_index == j.leaf_index and i.data_index == j.data_index) continue; // don't record self-overlap
+                if (i.leaf_index == j.leaf_index and i.data_index == j.data_index) continue;
                 try overlap_set_2.put(j, {});
             }
         }
     }
+
+    // cross-check overlap results for consistency
     var iter_1 = overlap_set_1.keyIterator();
     while (iter_1.next()) |i| try testing.expect(overlap_set_2.contains(i.*));
     try testing.expectEqual(overlap_set_1.count(), overlap_set_2.count());
