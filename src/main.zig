@@ -11,7 +11,7 @@ const time = std.time;
 const Vec2f = calc.Vec2f;
 const Ball2f = volume.Ball2f;
 const Box2f = volume.Box2f;
-const benchmark_len = 10000;
+const benchmark_len = 50000;
 const test_len = 200;
 
 var num_trials: u16 = 10;
@@ -40,7 +40,7 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
     std.debug.print("Running all benchmarks for {} bodies...\n", .{benchmark_len});
     try benchmarkIndexing(allocator);
     try benchmarkSquareTreeBalls(allocator);
-    try benchmarkSquareTreeBoxes(allocator);
+    // try benchmarkSquareTreeBoxes(allocator);
     benchmarkOverlapChecks();
     std.debug.print("Benchmarks complete!\n", .{});
 }
@@ -75,7 +75,7 @@ fn benchmarkOverlapChecks() void {
 }
 
 fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
-    const TreeType = data.SquareTree(2, 5, u6, Ball2f);
+    const TreeType = data.SquareTree(2, 6, u8, Ball2f);
     var type_info_buff: [512]u8 = undefined;
     const type_info = try TreeType.getTypeInfo(&type_info_buff);
     std.debug.print("{s}", .{type_info});
@@ -99,15 +99,15 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
     }
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
-        for (random_balls, body_indexes) |b, i| {
-            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
+        for (random_balls) |b| {
+            const overlaps_found = qt.findOverlaps(&overlap_buff, b);
             overlap_count_1 += @truncate(overlaps_found.len);
         }
     }
     const t_3 = time.microTimestamp();
     for (0..num_trials) |_| {
         for (random_balls, body_indexes) |b, i| {
-            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
+            const overlaps_found = qt.findOverlapsAfterIndex(&overlap_buff, b, i);
             overlap_count_2 += @truncate(overlaps_found.len);
         }
     }
@@ -129,7 +129,7 @@ fn benchmarkSquareTreeBalls(allocator: std.mem.Allocator) !void {
 }
 
 fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
-    const TreeType = data.SquareTree(2, 5, u6, Box2f);
+    const TreeType = data.SquareTree(2, 5, u8, Box2f);
     var type_info_buff: [512]u8 = undefined;
     const type_info = try TreeType.getTypeInfo(&type_info_buff);
     std.debug.print("{s}", .{type_info});
@@ -153,7 +153,7 @@ fn benchmarkSquareTreeBoxes(allocator: std.mem.Allocator) !void {
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
         for (random_boxes, body_indexes) |b, i| {
-            const overlaps_found = qt.findOverlapsWithVolume(&overlap_buff, b, i);
+            const overlaps_found = qt.findOverlapsAfterIndex(&overlap_buff, b, i);
             overlap_count += @truncate(overlaps_found.len);
         }
     }
@@ -194,7 +194,7 @@ fn genRandomData(seed: usize) void {
     for (0..benchmark_len) |i| {
         const x_index = (i + 2) % benchmark_len;
         const y_index = (i + 7) % benchmark_len;
-        const radius = 0.001 * random_floats[i];
+        const radius = 0.01 * random_floats[i];
         const half_width = if (i % 2 == 0) 0.7854 * radius else radius;
         const half_height = if (i % 2 != 0) 0.7854 * radius else radius;
         random_vecs[i] = Vec2f{ random_floats[x_index], random_floats[y_index] };
@@ -279,7 +279,7 @@ fn getNodeLabel(buff: []u8, lvl: u8, index: u32) ![]const u8 {
     };
 }
 
-test "square tree" {
+test "square tree integration test" {
     try initTesting(false);
     defer deinitTesting();
     const base_num = 4;
@@ -311,6 +311,7 @@ test "square tree" {
     );
     try testing.expect(max_dist_found < max_dist_expected + tolerance);
 
+    // TODO: separate the below into a helper function?
     // create an svg image depicting the grid structure of the tree
     var text_buff: [16]u8 = undefined;
     for (TreeType.reverse_levels) |lvl| {
@@ -329,27 +330,43 @@ test "square tree" {
         }
     }
     // find the overlapping bodies and record their indexes
-    var overlap_set = std.AutoHashMap(TreeType.BodyIndex, void).init(testing.allocator);
-    defer overlap_set.deinit();
+    var overlap_set_1 = std.AutoHashMap(TreeType.BodyIndex, void).init(testing.allocator);
+    defer overlap_set_1.deinit();
     var body_indexes: [test_len]TreeType.BodyIndex = undefined;
     var buff: [benchmark_len / 8]TreeType.BodyIndex = undefined;
     for (0..test_len) |i| body_indexes[i] = try st.addBody(random_balls[i]);
     st.updateBounds();
-    for (body_indexes) |b_index| {
-        const overlaps_found = st.findOverlapsFromIndex(&buff, b_index);
+    for (random_balls[0..test_len], body_indexes) |b, i| {
+        const overlaps_found = st.findOverlapsAfterIndex(&buff, b, i);
         if (overlaps_found.len > 0) {
-            try overlap_set.put(b_index, {});
-            for (overlaps_found) |j| try overlap_set.put(j, {});
+            try overlap_set_1.put(i, {});
+            for (overlaps_found) |j| try overlap_set_1.put(j, {});
         }
     }
-    // add circles to the canvas
+
+    // add circles to the canvas; write SVG file.
     for (body_indexes) |i| {
-        const body = st.getBody(i);
-        const style = if (overlap_set.contains(i)) solid_styles[5] else solid_styles[7];
+        const body = st.getBody(i) orelse unreachable;
+        const style = if (overlap_set_1.contains(i)) solid_styles[5] else solid_styles[7];
         try test_canvas.addCircle(testing.allocator, body.centre, body.radius, style);
     }
-
     var fname_buff: [128]u8 = undefined;
     const fpath = try fmt.bufPrint(&fname_buff, "{s}/square-tree-{}-{}.html", .{ out_dir_name, base_num, tree_depth });
     try test_canvas.writeHtml(testing.allocator, fpath, true);
+
+    // cross-check the overlaps are consistent using the alternate overlap function
+    var overlap_set_2 = std.AutoHashMap(TreeType.BodyIndex, void).init(testing.allocator);
+    defer overlap_set_2.deinit();
+    for (random_balls[0..test_len], body_indexes) |b, i| {
+        const overlaps_found = st.findOverlaps(&buff, b);
+        if (overlaps_found.len > 0) {
+            for (overlaps_found) |j| {
+                if (i.leaf_index == j.leaf_index and i.data_index == j.data_index) continue; // don't record self-overlap
+                try overlap_set_2.put(j, {});
+            }
+        }
+    }
+    var iter_1 = overlap_set_1.keyIterator();
+    while (iter_1.next()) |i| try testing.expect(overlap_set_2.contains(i.*));
+    try testing.expectEqual(overlap_set_1.count(), overlap_set_2.count());
 }
