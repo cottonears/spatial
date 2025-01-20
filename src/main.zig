@@ -14,7 +14,7 @@ const Box2f = volume.Box2f;
 const benchmark_len = 20000;
 const test_len = 1000;
 
-var num_trials: u16 = 10;
+var num_trials: u32 = 10;
 var random_floats: [benchmark_len]f32 = undefined;
 var random_vecs: [benchmark_len]Vec2f = undefined;
 var random_balls: [benchmark_len]Ball2f = undefined;
@@ -140,21 +140,25 @@ fn benchmarkSquareTree(
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
-    const SquareTree8x2 = data.SquareTree(8, 2, u8, Ball2f);
-    var ht = try SquareTree8x2.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
+    const Tree16x2 = data.SquareTree(4, 2, u8, Ball2f);
+    var ht = try Tree16x2.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
+    var ln_sum_2: usize = 0;
 
     const t_0 = time.microTimestamp();
-    for (0..benchmark_len) |i| {
-        const ln_1 = ht.getLeafIndexForPoint(random_vecs[i]);
-        ln_sum_1 += ln_1;
+    for (0..num_trials) |_| {
+        for (0..benchmark_len) |i| ln_sum_1 += ht.getLeafIndexForPoint(random_vecs[i]);
     }
     const t_1 = time.microTimestamp();
+    for (0..num_trials) |_| {
+        for (0..benchmark_len) |i| ln_sum_2 += ht.getNodeIndexForPoint(Tree16x2.depth, random_vecs[i]);
+    }
+    const t_2 = time.microTimestamp();
 
     std.debug.print(
-        "Index benchmark: indexed {} points in {} us. Leaf index sum = {}.\n",
-        .{ benchmark_len, t_1 - t_0, ln_sum_1 },
+        "Index benchmark: indexed {} points in {}/{} us. Leaf index sums = {}/{}.\n",
+        .{ num_trials * benchmark_len, t_1 - t_0, t_2 - t_1, ln_sum_1, ln_sum_2 },
     );
 }
 

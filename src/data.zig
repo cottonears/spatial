@@ -42,7 +42,7 @@ pub fn SquareTree(
         pub const reverse_levels = calc.getReversedRange(u8, tree_depth);
         const level_bitshift = std.math.log2(base_squared);
 
-        pub fn init(allocator: std.mem.Allocator, leaf_capacity: u32, origin: Vec2f, size: f32) !Self {
+        pub fn init(allocator: std.mem.Allocator, leaf_capacity: u16, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
 
             var vols: [depth][]VolumeType = undefined;
@@ -128,17 +128,23 @@ pub fn SquareTree(
             return 0 <= d[0] and d[0] < self.size and 0 <= d[1] and d[1] < self.size;
         }
 
-        /// Gets the index of the leaf node the query point lies within.
+        /// Gets the index of the node at the specified depth that the query point lies within.
         /// Assumes the point is within the region covered by this tree.
-        pub fn getLeafIndexForPoint(self: Self, point: Vec2f) NodeIndex {
+        pub fn getNodeIndexForPoint(self: Self, node_depth: u8, point: Vec2f) NodeIndex {
             const d = point - self.origin;
             var index: NodeIndex = 0;
-            for (0..depth) |lvl| {
+            for (0..node_depth) |lvl| {
                 const row = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[1])) % base;
                 const col = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[0])) % base;
                 index = (index << @truncate(level_bitshift)) + row * base + col;
             }
             return index;
+        }
+
+        /// Gets the index of the leaf node that the query point lies within.
+        /// Assumes the point is within the region covered by this tree.
+        pub fn getLeafIndexForPoint(self: Self, point: Vec2f) NodeIndex {
+            return self.getNodeIndexForPoint(depth, point);
         }
 
         /// Adds a body to the tree and returns its index.
@@ -346,7 +352,7 @@ test "quad tree indexing" {
     try testing.expectEqual(false, pt_check_4);
 
     const pt_a = Vec2f{ 4.1, 4.1 };
-    const index_a = qt.getLeafIndexForPoint(pt_a);
+    const index_a = qt.getNodeIndexForPoint(pt_a);
     const parent_a = QuadTree3.getPredeccessorIndex(index_a, 1);
     const grandparent_a = QuadTree3.getPredeccessorIndex(index_a, 2);
     try testing.expectEqual(48, index_a);
