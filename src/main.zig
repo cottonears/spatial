@@ -117,8 +117,8 @@ fn benchmarkSquareTree(
     }
     const t_3 = time.microTimestamp();
     for (0..num_trials) |_| {
-        for (random_bodies, body_indexes) |b, i| {
-            const overlaps_found = qt.findOverlapsAfterIndex(&overlap_buff, b, i);
+        for (body_indexes) |i| {
+            const overlaps_found = qt.findOverlapsFromIndex(&overlap_buff, i);
             overlap_count_2 += @truncate(overlaps_found.len);
         }
     }
@@ -338,9 +338,9 @@ test "draw ball grid" {
     ball_grid.updateBounds();
     var overlap_set = std.AutoHashMap(BallGrid.BodyIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
-    for (random_balls[0..test_len], body_indexes) |b, i| {
+    for (body_indexes) |i| {
         var overlap_buff: [test_len]BallGrid.BodyIndex = undefined;
-        const overlaps_found = ball_grid.findOverlapsAfterIndex(&overlap_buff, b, i);
+        const overlaps_found = ball_grid.findOverlapsFromIndex(&overlap_buff, i);
         if (overlaps_found.len == 0) continue;
         try overlap_set.put(i, {});
         for (overlaps_found) |j| try overlap_set.put(j, {});
@@ -389,9 +389,9 @@ test "draw box grid" {
     box_grid.updateBounds();
     var overlap_set = std.AutoHashMap(BoxGrid.BodyIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
-    for (random_boxes[0..test_len], body_indexes) |b, i| {
+    for (body_indexes) |i| {
         var overlap_buff: [test_len]BoxGrid.BodyIndex = undefined;
-        const overlaps_found = box_grid.findOverlapsAfterIndex(&overlap_buff, b, i);
+        const overlaps_found = box_grid.findOverlapsFromIndex(&overlap_buff, i);
         if (overlaps_found.len == 0) continue;
         try overlap_set.put(i, {});
         for (overlaps_found) |j| try overlap_set.put(j, {});
@@ -448,9 +448,9 @@ test "integration test 1" {
     // find the overlapping bodies and record their indexes
     var overlap_set_1 = std.AutoHashMap(BallGrid.BodyIndex, void).init(testing.allocator);
     defer overlap_set_1.deinit();
-    for (random_balls[0..test_len], body_indexes) |b, i| {
+    for (body_indexes) |i| {
         var buff: [test_len]BallGrid.BodyIndex = undefined;
-        const overlaps_found = ball_grid.findOverlapsAfterIndex(&buff, b, i);
+        const overlaps_found = ball_grid.findOverlapsFromIndex(&buff, i);
         if (overlaps_found.len > 0) {
             try overlap_set_1.put(i, {});
             for (overlaps_found) |j| try overlap_set_1.put(j, {});

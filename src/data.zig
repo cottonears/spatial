@@ -192,12 +192,12 @@ pub fn SquareTree(
         }
 
         /// Returns indexes of all stored bodies that lie within the query volume.
-        pub fn findOverlaps(self: Self, buff: []BodyIndex, query_vol: VolumeType) []BodyIndex {
+        pub fn findOverlaps(self: Self, overlap_buff: []BodyIndex, query_vol: VolumeType) []BodyIndex {
             var buff_1: [num_leaves]NodeIndex = undefined;
             var buff_2: [num_leaves]NodeIndex = undefined;
             var search_slice: []NodeIndex = getChildIndexes(&buff_1, 0);
             var next_slice: []NodeIndex = buff_2[0..];
-            // iterate through all parent nodes
+            // search through higher-level nodes
             for (0..depth - 1) |lvl| {
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
@@ -209,36 +209,52 @@ pub fn SquareTree(
                 next_slice.ptr = search_slice.ptr;
                 search_slice = swap_slice[0..next_offset];
             }
-            // iterate through leaf nodes
-            var buff_len: usize = 0;
+            // check leaf nodes for overlaps
+            var overlap_len: usize = 0;
             for (search_slice) |i| {
                 for (0.., self.leaf_data[i].items) |j, b| {
                     if (query_vol.overlapsOther(b)) {
-                        buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
-                        buff_len += 1;
+                        overlap_buff[overlap_len] = BodyIndex{
+                            .leaf_index = i,
+                            .data_index = @intCast(j),
+                        };
+                        overlap_len += 1;
                     }
                 }
             }
             // TODO: find out if there is a cleaner way of doing the below?
-            return if (buff_len > 0) buff[0..buff_len] else &[0]BodyIndex{};
+            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
         }
 
         /// Returns indexes of stored bodies within the query volume with index > prior_index.
-        pub fn findOverlapsAfterIndex(
-            self: Self,
-            buff: []BodyIndex,
-            query_vol: VolumeType,
-            prior_index: BodyIndex,
-        ) []BodyIndex {
+        pub fn findOverlapsFromIndex(self: Self, overlap_buff: []BodyIndex, index: BodyIndex) []BodyIndex {
             var buff_1: [num_leaves]NodeIndex = undefined;
             var buff_2: [num_leaves]NodeIndex = undefined;
             var search_slice: []NodeIndex = getChildIndexes(&buff_1, 0);
             var next_slice: []NodeIndex = buff_2[0..];
-            const pl_index = prior_index.leaf_index;
-            // iterate through all parent nodes
+            var overlap_len: usize = 0;
+            // check the leaf node for the query index first
+            const query_leaf_slice = self.leaf_data[index.leaf_index].items;
+            const query_vol = query_leaf_slice[index.data_index];
+            if (index.data_index + 1 < query_leaf_slice.len) {
+                for (index.data_index + 1..query_leaf_slice.len) |j| {
+                    if (query_vol.overlapsOther(query_leaf_slice[j])) {
+                        overlap_buff[overlap_len] = BodyIndex{
+                            .leaf_index = index.leaf_index,
+                            .data_index = @intCast(j),
+                        };
+                        overlap_len += 1;
+                    }
+                }
+            }
+            if (index.leaf_index == num_leaves - 1) {
+                return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
+            }
+            // search through higher-level nodes from the next index
+            const next_index = index.leaf_index + 1;
             for (0..depth - 1) |lvl| {
                 const lvl_diff: u8 = @intCast(depth - 1 - lvl);
-                const lvl_start = getPredeccessorIndex(pl_index, lvl_diff);
+                const lvl_start = getPredeccessorIndex(next_index, lvl_diff);
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
                     if (lvl_start <= i and query_vol.overlapsOther(self.bounding_volumes[lvl][i])) {
@@ -250,32 +266,19 @@ pub fn SquareTree(
                 search_slice = swap_slice[0..next_offset];
             }
             // iterate through leaf nodes
-            var buff_len: usize = 0;
             for (search_slice) |i| {
-                // NOTE: The below code is ugly, but it performs reasonably well.
-                //       In testing it ran about 10% faster than the 'cleaner' version it replaced.
-                //       The cleaner version was much closer to the same loop in findOverlaps.
-                //       It might be possible to further improve performance.
-                const ld_slice = self.leaf_data[i].items;
-                if (i < pl_index or ld_slice.len == 0) continue;
-                if (i > pl_index) {
-                    for (0..ld_slice.len) |j| {
-                        if (query_vol.overlapsOther(ld_slice[j])) {
-                            buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
-                            buff_len += 1;
-                        }
-                    }
-                } else { // TODO: check if these can be combined?
-                    if (prior_index.data_index == ld_slice.len - 1) continue;
-                    for (prior_index.data_index + 1..ld_slice.len) |j| {
-                        if (query_vol.overlapsOther(ld_slice[j])) {
-                            buff[buff_len] = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) };
-                            buff_len += 1;
-                        }
+                if (i < next_index) continue;
+                for (0.., self.leaf_data[i].items) |j, b| {
+                    if (query_vol.overlapsOther(b)) {
+                        overlap_buff[overlap_len] = BodyIndex{
+                            .leaf_index = i,
+                            .data_index = @intCast(j),
+                        };
+                        overlap_len += 1;
                     }
                 }
             }
-            return if (buff_len > 0) buff[0..buff_len] else &[0]BodyIndex{};
+            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
         }
 
         /// Gets the index of the identified node's predecessor (0 or more levels higher).
@@ -420,11 +423,11 @@ test "hex tree overlap ball" {
     const overlap_indexes_2 = tree.findOverlaps(&index_buff, query_region_2);
     try testing.expectEqual(0, overlap_indexes_2.len);
 
-    const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 2.0 }; // outside the tree's region, but overlapping
+    const query_region_3 = Ball2f{ .centre = Vec2f{ 0.2, 0.5 }, .radius = 0.2 }; // outside the tree's region, but overlapping
     const overlap_indexes_3a = tree.findOverlaps(&index_buff, query_region_3);
-    const overlap_indexes_3b = tree.findOverlapsAfterIndex(&index_buff, query_region_3, index_a);
+    const overlap_indexes_3b = tree.findOverlapsFromIndex(&index_buff, index_a);
     try testing.expectEqual(3, overlap_indexes_3a.len);
-    try testing.expectEqual(2, overlap_indexes_3b.len);
+    try testing.expectEqual(1, overlap_indexes_3b.len);
 }
 
 test "hex tree overlap box" {
@@ -434,7 +437,7 @@ test "hex tree overlap box" {
 
     const a = Box2f{ .centre = Vec2f{ 0.2, 0.0 }, .half_width = 0.4, .half_height = 0.4 };
     const b = Box2f{ .centre = Vec2f{ 0.2, 0.5 }, .half_width = 0.2, .half_height = 0.2 };
-    const c = Box2f{ .centre = Vec2f{ 0.2, 0.9 }, .half_width = 0.1, .half_height = 0.1 };
+    const c = Box2f{ .centre = Vec2f{ 0.2, 0.7 }, .half_width = 0.1, .half_height = 0.1 };
     const index_a = try tree.addBody(a);
     const index_b = try tree.addBody(b);
     const index_c = try tree.addBody(c);
@@ -452,11 +455,11 @@ test "hex tree overlap box" {
     const overlap_indexes_2 = tree.findOverlaps(&index_buff, query_region_2);
     try testing.expectEqual(0, overlap_indexes_2.len);
 
-    const query_region_3 = Box2f{ .centre = Vec2f{ 0.2, 0.5 }, .half_width = 1.0, .half_height = 1.0 };
+    const query_region_3 = Box2f{ .centre = Vec2f{ 0.2, 0.5 }, .half_width = 0.2, .half_height = 0.2 };
     const overlap_3a = tree.findOverlaps(&index_buff, query_region_3);
-    const overlap_3b = tree.findOverlapsAfterIndex(&index_buff, query_region_3, index_a);
+    const overlap_3b = tree.findOverlapsFromIndex(&index_buff, index_a);
     try testing.expectEqual(3, overlap_3a.len);
-    try testing.expectEqual(2, overlap_3b.len);
+    try testing.expectEqual(1, overlap_3b.len);
 }
 
 test "square tree add remove" {
