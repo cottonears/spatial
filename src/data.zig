@@ -41,10 +41,10 @@ pub fn SquareTree(
         pub const leaf_indexes = calc.getRange(NodeIndex, num_leaves);
         pub const reverse_levels = calc.getReversedRange(u8, tree_depth);
         const level_bitshift = std.math.log2(base_squared);
+        const empty_point = Vec2f{ std.math.floatMax(f32), std.math.floatMax(f32) };
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u16, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
-
             var vols: [depth][]VolumeType = undefined;
             var size_per_lvl: [depth]f32 = undefined;
             var scale_per_lvl: [depth]f32 = undefined;
@@ -55,12 +55,10 @@ pub fn SquareTree(
                 scale_per_lvl[lvl] = 1.0 / size_per_lvl[lvl];
                 last_size = last_size / base;
             }
-
             var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined;
             for (leaf_indexes) |i| {
                 leaf_arrays[i] = try std.ArrayListUnmanaged(VolumeType).initCapacity(allocator, leaf_capacity);
             }
-
             return Self{
                 .allocator = allocator,
                 .bounding_volumes = vols,
@@ -177,7 +175,7 @@ pub fn SquareTree(
             for (reverse_levels) |lvl| {
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
-                        var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty volume
+                        var ball = VolumeType{ .centre = empty_point }; // start with an empty volume
                         for (0..self.leaf_data[i].items.len) |j| {
                             ball = VolumeType.getEncompassing(ball, self.leaf_data[i].items[j]);
                         }
@@ -186,7 +184,7 @@ pub fn SquareTree(
                 } else { // parent nodes
                     var child_index_buff: [base_squared]NodeIndex = undefined;
                     for (0..nodes_in_level[lvl]) |i| {
-                        var ball = VolumeType{ .centre = Vec2f{ 0, 0 } }; // start with an empty volume
+                        var ball = VolumeType{ .centre = empty_point }; // start with an empty volume
                         const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
                         for (child_indexes) |j| {
                             ball = VolumeType.getEncompassing(ball, self.bounding_volumes[lvl + 1][j]);
@@ -207,7 +205,8 @@ pub fn SquareTree(
             for (0..depth - 1) |lvl| {
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
-                    if (query_vol.overlapsOther(self.bounding_volumes[lvl][i])) {
+                    const node_vol = self.bounding_volumes[lvl][i];
+                    if (query_vol.overlapsOther(node_vol)) {
                         next_offset += getChildIndexes(next_slice[next_offset..], i).len;
                     }
                 }
@@ -263,7 +262,8 @@ pub fn SquareTree(
                 const lvl_start = getPredeccessorIndex(next_index, lvl_diff);
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
-                    if (lvl_start <= i and query_vol.overlapsOther(self.bounding_volumes[lvl][i])) {
+                    const node_vol = self.bounding_volumes[lvl][i];
+                    if (lvl_start <= i and query_vol.overlapsOther(node_vol)) {
                         next_offset += getChildIndexes(next_slice[next_offset..], i).len;
                     }
                 }

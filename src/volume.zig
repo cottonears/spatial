@@ -31,10 +31,11 @@ pub const Ball2f = struct {
     }
 
     /// Returns true if the two balls overlap.
+    /// Assumes neither of them is empty.
     pub fn overlapsOther(self: Self, other: Ball2f) bool {
-        if (self.radius == 0 or other.radius == 0) return false;
+        const d = self.centre - other.centre;
         const r_sum = self.radius + other.radius;
-        return calc.squaredSum(self.centre - other.centre) < r_sum * r_sum;
+        return calc.squaredSum(d) < r_sum * r_sum;
     }
 
     // One way of doing this would be to do the following (might be a bit inefficient):
@@ -76,6 +77,7 @@ pub const Box2f = struct {
     }
 
     /// Returns true if the two boxes overlap.
+    /// Assumes neither of them is empty.
     pub fn overlapsOther(self: Self, other: Box2f) bool {
         const d = self.centre - other.centre;
         const width_sum = self.half_width + other.half_width;
