@@ -117,8 +117,8 @@ pub const Canvas = struct {
     pub fn getSvg(self: Self, allocator: mem.Allocator) ![]u8 {
         const svg_start = try std.fmt.allocPrint(
             allocator,
-            "<svg viewBox=\"{d} {d} {d} {d}\" style=\"border:1px solid black\" xmlns=\"http://www.w3.org/2000/svg\">",
-            .{ -5, -5, self.width + 5, self.height + 5 },
+            "<svg width=\"{d:.3}\" height=\"{d:.3}\" xmlns=\"http://www.w3.org/2000/svg\">",
+            .{ self.width, self.height },
         );
         defer allocator.free(svg_start);
 
@@ -285,5 +285,4 @@ test "paint" { // creates a canvas and paint it
     try canvas.addPolygon(testing.allocator, points[0..], style_1);
     try canvas.addCircle(testing.allocator, [_]f32{ 0, 200 }, 10.0, style_2);
     try canvas.addLine(testing.allocator, [_]f32{ -200, -100 }, [_]f32{ 200, 300 }, style_3);
-    if (gen_debug_output) try canvas.writeHtml(testing.allocator, "test-out/svg-paint.html", true);
 }
