@@ -1,5 +1,6 @@
 const std = @import("std");
 const calc = @import("calc.zig");
+const vol = @import("volume.zig");
 const Vec2f = calc.Vec2f;
 
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
@@ -7,16 +8,16 @@ pub fn SquareTree(
     comptime base_num: u8, // Each node has base_num * base_num children.
     comptime tree_depth: u8, // The number of layers in the tree structure.
     comptime DataIndex: type, // Type used to index data stored in leaf nodes.
-    comptime VolumeType: anytype, // Type of bounding volume stored in the tree.
+    comptime VolType: anytype, // Type of bounding volume stored in the tree.
 ) type {
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
         size: f32,
-        size_per_level: [tree_depth]f32,
+        size_per_level: [tree_depth]f32, // TODO: Consider getting rid of this? LLVM can do this optimisation for us.
         scale_per_level: [tree_depth]f32,
-        bounding_volumes: [tree_depth][]VolumeType = undefined,
-        leaf_data: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined,
+        bounding_volumes: [tree_depth][]?VolType = undefined,
+        leaf_data: [num_leaves]std.ArrayListUnmanaged(VolType) = undefined,
         num_bodies: usize = 0,
 
         // check arguments are supported
@@ -45,19 +46,19 @@ pub fn SquareTree(
 
         pub fn init(allocator: std.mem.Allocator, leaf_capacity: u16, origin: Vec2f, size: f32) !Self {
             if (size <= 0.0) return error.InvalidSize;
-            var vols: [depth][]VolumeType = undefined;
+            var vols: [depth][]?VolType = undefined;
             var size_per_lvl: [depth]f32 = undefined;
             var scale_per_lvl: [depth]f32 = undefined;
             var last_size = size;
             for (0..depth) |lvl| {
-                vols[lvl] = try allocator.alloc(VolumeType, nodes_in_level[lvl]);
+                vols[lvl] = try allocator.alloc(?VolType, nodes_in_level[lvl]);
                 size_per_lvl[lvl] = last_size / base;
                 scale_per_lvl[lvl] = 1.0 / size_per_lvl[lvl];
                 last_size = last_size / base;
             }
-            var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolumeType) = undefined;
+            var leaf_arrays: [num_leaves]std.ArrayListUnmanaged(VolType) = undefined;
             for (leaf_indexes) |i| {
-                leaf_arrays[i] = try std.ArrayListUnmanaged(VolumeType).initCapacity(allocator, leaf_capacity);
+                leaf_arrays[i] = try std.ArrayListUnmanaged(VolType).initCapacity(allocator, leaf_capacity);
             }
             return Self{
                 .allocator = allocator,
@@ -81,7 +82,7 @@ pub fn SquareTree(
             buff_len += (try std.fmt.bufPrint(
                 buff,
                 "■ SquareTree({}, {}, {}, {}) info:\n  Body Index = {} + {} ({} bytes)\n",
-                .{ base, depth, DataIndex, VolumeType, NodeIndex, DataIndex, @sizeOf(BodyIndex) },
+                .{ base, depth, DataIndex, VolType, NodeIndex, DataIndex, @sizeOf(BodyIndex) },
             )).len;
             buff_len += (try std.fmt.bufPrint(
                 buff[buff_len..],
@@ -126,12 +127,12 @@ pub fn SquareTree(
             return 0 <= d[0] and d[0] < self.size and 0 <= d[1] and d[1] < self.size;
         }
 
-        /// Gets the index of the node at the specified depth that the query point lies within.
+        /// Gets the index of the node on the specified level that the query point lies within.
         /// Assumes the point is within the region covered by this tree.
-        pub fn getNodeIndexForPoint(self: Self, node_depth: u8, point: Vec2f) NodeIndex {
+        pub fn getNodeIndexForPoint(self: Self, level: u8, point: Vec2f) NodeIndex {
             const d = point - self.origin;
             var index: NodeIndex = 0;
-            for (0..node_depth) |lvl| {
+            for (0..level + 1) |lvl| {
                 const row = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[1])) % base;
                 const col = @as(NodeIndex, @intFromFloat(self.scale_per_level[lvl] * d[0])) % base;
                 index = (index << @truncate(level_bitshift)) + row * base + col;
@@ -142,11 +143,11 @@ pub fn SquareTree(
         /// Gets the index of the leaf node that the query point lies within.
         /// Assumes the point is within the region covered by this tree.
         pub fn getLeafIndexForPoint(self: Self, point: Vec2f) NodeIndex {
-            return self.getNodeIndexForPoint(depth, point);
+            return self.getNodeIndexForPoint(depth - 1, point);
         }
 
         /// Adds a body to the tree and returns its index.
-        pub fn addBody(self: *Self, ball: VolumeType) !BodyIndex {
+        pub fn addBody(self: *Self, ball: VolType) !BodyIndex {
             const leaf = self.getLeafIndexForPoint(ball.centre);
             const array_index: DataIndex = @intCast(self.leaf_data[leaf].items.len);
             if (array_index == std.math.maxInt(DataIndex)) {
@@ -158,7 +159,7 @@ pub fn SquareTree(
         }
 
         /// Gets the body at the specified index.
-        pub fn getBody(self: Self, index: BodyIndex) ?VolumeType {
+        pub fn getBody(self: Self, index: BodyIndex) ?VolType {
             const ld_slice = self.leaf_data[index.leaf_index].items;
             return if (ld_slice.len > index.data_index) ld_slice[index.data_index] else null;
         }
@@ -175,28 +176,28 @@ pub fn SquareTree(
             for (reverse_levels) |lvl| {
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
-                        var ball = VolumeType{ .centre = empty_point }; // start with an empty volume
+                        var bv: ?VolType = null;
                         for (0..self.leaf_data[i].items.len) |j| {
-                            ball = VolumeType.getEncompassing(ball, self.leaf_data[i].items[j]);
+                            bv = vol.getEncompassingVolume(VolType, bv, self.leaf_data[i].items[j]);
                         }
-                        self.bounding_volumes[lvl][i] = ball;
+                        self.bounding_volumes[lvl][i] = bv;
                     }
                 } else { // parent nodes
                     var child_index_buff: [base_squared]NodeIndex = undefined;
                     for (0..nodes_in_level[lvl]) |i| {
-                        var ball = VolumeType{ .centre = empty_point }; // start with an empty volume
+                        var bv: ?VolType = null;
                         const child_indexes = getChildIndexes(&child_index_buff, @intCast(i));
                         for (child_indexes) |j| {
-                            ball = VolumeType.getEncompassing(ball, self.bounding_volumes[lvl + 1][j]);
+                            bv = vol.getEncompassingVolume(VolType, bv, self.bounding_volumes[lvl + 1][j]);
                         }
-                        self.bounding_volumes[lvl][i] = ball;
+                        self.bounding_volumes[lvl][i] = bv;
                     }
                 }
             }
         }
 
         /// Returns indexes of all stored bodies that lie within the query volume.
-        pub fn findOverlaps(self: Self, overlap_buff: []BodyIndex, query_vol: VolumeType) []BodyIndex {
+        pub fn findOverlaps(self: Self, overlap_buff: []BodyIndex, query_vol: VolType) []BodyIndex {
             var buff_1: [num_leaves]NodeIndex = undefined;
             var buff_2: [num_leaves]NodeIndex = undefined;
             var search_slice: []NodeIndex = getChildIndexes(&buff_1, 0);
@@ -206,7 +207,7 @@ pub fn SquareTree(
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
                     const node_vol = self.bounding_volumes[lvl][i];
-                    if (query_vol.overlapsOther(node_vol)) {
+                    if (node_vol != null and vol.checkVolumesOverlap(query_vol, node_vol.?)) {
                         next_offset += getChildIndexes(next_slice[next_offset..], i).len;
                     }
                 }
@@ -218,7 +219,7 @@ pub fn SquareTree(
             var overlap_len: usize = 0;
             for (search_slice) |i| {
                 for (0.., self.leaf_data[i].items) |j, b| {
-                    if (query_vol.overlapsOther(b)) {
+                    if (vol.checkVolumesOverlap(query_vol, b)) {
                         overlap_buff[overlap_len] = BodyIndex{
                             .leaf_index = i,
                             .data_index = @intCast(j),
@@ -243,7 +244,7 @@ pub fn SquareTree(
             const query_vol = query_leaf_slice[index.data_index];
             if (index.data_index + 1 < query_leaf_slice.len) {
                 for (index.data_index + 1..query_leaf_slice.len) |j| {
-                    if (query_vol.overlapsOther(query_leaf_slice[j])) {
+                    if (vol.checkVolumesOverlap(query_vol, query_leaf_slice[j])) {
                         overlap_buff[overlap_len] = BodyIndex{
                             .leaf_index = index.leaf_index,
                             .data_index = @intCast(j),
@@ -263,7 +264,7 @@ pub fn SquareTree(
                 var next_offset: usize = 0;
                 for (search_slice) |i| {
                     const node_vol = self.bounding_volumes[lvl][i];
-                    if (lvl_start <= i and query_vol.overlapsOther(node_vol)) {
+                    if (lvl_start <= i and node_vol != null and vol.checkVolumesOverlap(query_vol, node_vol.?)) {
                         next_offset += getChildIndexes(next_slice[next_offset..], i).len;
                     }
                 }
@@ -275,7 +276,7 @@ pub fn SquareTree(
             for (search_slice) |i| {
                 if (i < next_index) continue;
                 for (0.., self.leaf_data[i].items) |j, b| {
-                    if (query_vol.overlapsOther(b)) {
+                    if (vol.checkVolumesOverlap(query_vol, b)) {
                         overlap_buff[overlap_len] = BodyIndex{
                             .leaf_index = i,
                             .data_index = @intCast(j),
@@ -352,7 +353,7 @@ test "quad tree indexing" {
     try testing.expectEqual(false, pt_check_4);
 
     const pt_a = Vec2f{ 4.1, 4.1 };
-    const index_a = qt.getNodeIndexForPoint(pt_a);
+    const index_a = qt.getLeafIndexForPoint(pt_a);
     const parent_a = QuadTree3.getPredeccessorIndex(index_a, 1);
     const grandparent_a = QuadTree3.getPredeccessorIndex(index_a, 2);
     try testing.expectEqual(48, index_a);
