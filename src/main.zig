@@ -2,15 +2,15 @@ const std = @import("std");
 const calc = @import("calc.zig");
 const data = @import("data.zig");
 const svg = @import("svg.zig");
-const volume = @import("volume.zig");
+const vol = @import("volume.zig");
 const fmt = std.fmt;
 const fs = std.fs;
 const os = std.os;
 const time = std.time;
 
 const Vec2f = calc.Vec2f;
-const Ball2f = volume.Ball2f;
-const Box2f = volume.Box2f;
+const Ball2f = vol.Ball2f;
+const Box2f = vol.Box2f;
 const benchmark_len = 20000;
 const test_len = 1000;
 
@@ -57,7 +57,7 @@ fn benchmarkOverlapChecks() void {
     const first_ball = random_balls[0];
     for (0..num_trials) |_| {
         for (random_balls) |b| {
-            const overlap = first_ball.overlapsOther(b);
+            const overlap = vol.checkVolumesOverlap(first_ball, b);
             overlap_count_1 += if (overlap) 1 else 0;
         }
     }
@@ -66,7 +66,7 @@ fn benchmarkOverlapChecks() void {
     const first_box = random_boxes[0];
     for (0..num_trials) |_| {
         for (random_boxes) |b| {
-            const overlap = first_box.overlapsOther(b);
+            const overlap = vol.checkVolumesOverlap(first_box, b);
             overlap_count_2 += if (overlap) 1 else 0;
         }
     }
@@ -152,7 +152,7 @@ fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
     }
     const t_1 = time.microTimestamp();
     for (0..num_trials) |_| {
-        for (0..benchmark_len) |i| ln_sum_2 += ht.getNodeIndexForPoint(Tree16x2.depth, random_vecs[i]);
+        for (0..benchmark_len) |i| ln_sum_2 += ht.getNodeIndexForPoint(Tree16x2.depth - 1, random_vecs[i]);
     }
     const t_2 = time.microTimestamp();
 
@@ -267,10 +267,14 @@ test "draw encompassing balls" {
             .centre = random_vecs[11 * i],
             .radius = 0.25 * random_floats[13 * i],
         };
-        const c = Ball2f.getEncompassing(a, b);
+        const c = vol.getEncompassingVolume(Ball2f, a, b);
+        std.debug.print(
+            "{}. A = (c = {d:.3}, r = {d:.3}), B = (c = {d:.3}, r = {d:.3});  C = (c = {d:.3}, r = {d:.3})\n",
+            .{ i, a.centre, a.radius, b.centre, b.radius, c.?.centre, c.?.radius },
+        );
         try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[1]);
         try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[3]);
-        try test_canvas.addCircle(testing.allocator, c.centre, c.radius, dashed_styles[7]);
+        try test_canvas.addCircle(testing.allocator, c.?.centre, c.?.radius, dashed_styles[7]);
         // write an image to file
         var fname_buff: [128]u8 = undefined;
         const fpath = try fmt.bufPrint(
@@ -296,10 +300,10 @@ test "draw encompassing boxes" {
             .half_width = 0.25 * random_floats[13 * i],
             .half_height = 0.25 * random_floats[17 * i],
         };
-        const c = Box2f.getEncompassing(a, b);
+        const c = vol.getEncompassingVolume(Box2f, a, b);
         const corners_a = a.getCorners();
         const corners_b = b.getCorners();
-        const corners_c = c.getCorners();
+        const corners_c = c.?.getCorners();
         try test_canvas.addRectangle(testing.allocator, corners_a[0], corners_a[1], solid_styles[1]);
         try test_canvas.addRectangle(testing.allocator, corners_b[0], corners_b[1], solid_styles[3]);
         try test_canvas.addRectangle(testing.allocator, corners_c[0], corners_c[1], dashed_styles[7]);
