@@ -258,7 +258,7 @@ fn getNodeLabel(buff: []u8, lvl: u8, index: u32) ![]const u8 {
 test "draw encompassing balls" {
     try initTesting(true);
     defer deinitTesting();
-    for (0..test_len / 100) |i| {
+    for (0..test_len / 20) |i| {
         const a = Ball2f{
             .centre = random_vecs[3 * i],
             .radius = 0.25 * random_floats[7 * i],
@@ -268,10 +268,6 @@ test "draw encompassing balls" {
             .radius = 0.25 * random_floats[13 * i],
         };
         const c = vol.getEncompassingVolume(Ball2f, a, b);
-        std.debug.print(
-            "{}. A = (c = {d:.3}, r = {d:.3}), B = (c = {d:.3}, r = {d:.3});  C = (c = {d:.3}, r = {d:.3})\n",
-            .{ i, a.centre, a.radius, b.centre, b.radius, c.?.centre, c.?.radius },
-        );
         try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[1]);
         try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[3]);
         try test_canvas.addCircle(testing.allocator, c.?.centre, c.?.radius, dashed_styles[7]);

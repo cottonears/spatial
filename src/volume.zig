@@ -64,15 +64,15 @@ pub fn checkVolumesOverlap(a: anytype, b: anytype) bool {
 pub fn getEncompassingBall(a: ?Ball2f, b: ?Ball2f) ?Ball2f {
     if (a == null) return b;
     if (b == null) return a;
-    const vec_sum = a.?.centre + b.?.centre;
-    const vec_diff = a.?.centre - b.?.centre;
-    const r_sum = a.?.radius + b.?.radius;
+    const d = a.?.centre - b.?.centre;
     const r_diff = a.?.radius - b.?.radius;
-    const centre_dist = calc.norm(vec_diff);
-    const centre_offset = if (centre_dist > 0) calc.scaledVec(0.5 * r_diff / centre_dist, vec_diff) else Vec2f{ 0, 0 };
-    const enc_centre = calc.scaledVec(0.5, vec_sum) + centre_offset;
-    const enc_radius = 0.5 * (centre_dist + r_sum);
-    return .{ .centre = enc_centre, .radius = enc_radius };
+    const dist = calc.norm(d);
+    if (b.?.radius == 0 or (dist <= r_diff)) return a; // a encompasses b
+    if (a.?.radius == 0 or (dist <= -r_diff)) return b; // b encompasses a
+    return .{
+        .radius = 0.5 * (dist + a.?.radius + b.?.radius),
+        .centre = calc.scaledVec(0.5, a.?.centre + b.?.centre) + calc.scaledVec(0.5 * r_diff / dist, d),
+    };
 }
 
 /// Returns a box that encompasses both input boxes.
@@ -89,7 +89,6 @@ pub fn getEncompassingBox(a: ?Box2f, b: ?Box2f) ?Box2f {
     return .{ .centre = enc_centre, .half_width = half_width, .half_height = half_height };
 }
 
-// TODO: make this more robust
 pub fn getEncompassingVolume(T: type, a: anytype, b: anytype) ?T {
     return switch (T) {
         Ball2f => getEncompassingBall(a, b),
@@ -133,6 +132,9 @@ test "boxes overlap" {
     try testing.expectEqual(false, check_4);
 }
 
-// TODO: write further encompassing + overlap tests
-// currently this case is bugged
-// 1. A = (c = { 0.029, 0.378 }, r = 0.199), B = (c = { 0.123, 0.355 }, r = 0.031);  C = (c = { -0.006, 0.387 }, r = 0.163)
+test "test encompassing balls" {
+    const a = Ball2f{ .centre = Vec2f{ 0.029, 0.378 }, .radius = 0.199 };
+    const b = Ball2f{ .centre = Vec2f{ 0.123, 0.355 }, .radius = 0.031 };
+    const c = getEncompassingVolume(Ball2f, a, b);
+    try testing.expect(c.?.radius >= @max(a.radius, b.radius));
+}
