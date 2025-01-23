@@ -44,10 +44,14 @@ pub fn checkOverlapBoxBox(a: Box2f, b: Box2f) bool {
 /// Returns true if the ball and box overlap.
 /// Assumes neither of them is empty.
 pub fn checkOverlapBallBox(a: Ball2f, b: Box2f) bool {
-    // TODO: implement this!
-    _ = a;
-    _ = b;
-    return false;
+    const vec_diff = b.centre - a.centre;
+    const norm_d = calc.norm(vec_diff);
+    if (norm_d <= a.radius) return true;
+    // Find the point on the edge of the circle in the direction of b.
+    // Translate the point to get its position relative to b.
+    // Finally, check if this edge point is within b.
+    const edge_pt = calc.scaledVec(a.radius / norm_d, vec_diff) - vec_diff;
+    return @abs(edge_pt[0]) < b.half_width and @abs(edge_pt[1]) < b.half_height;
 }
 
 /// Returns true if the two volumes overlap.

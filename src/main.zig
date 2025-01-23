@@ -52,9 +52,11 @@ fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
 fn benchmarkOverlapChecks() void {
     var overlap_count_1: u32 = 0;
     var overlap_count_2: u32 = 0;
+    var overlap_count_3: u32 = 0;
 
     const t_0 = time.microTimestamp();
-    const first_ball = random_balls[0];
+    var first_ball = random_balls[0];
+    first_ball.radius = first_ball.radius * 25;
     for (0..num_trials) |_| {
         for (random_balls) |b| {
             const overlap = vol.checkVolumesOverlap(first_ball, b);
@@ -63,7 +65,9 @@ fn benchmarkOverlapChecks() void {
     }
     const t_1 = time.microTimestamp();
 
-    const first_box = random_boxes[0];
+    var first_box = random_boxes[0];
+    first_box.half_width = first_box.half_width * 25;
+    first_box.half_height = first_box.half_height * 25;
     for (0..num_trials) |_| {
         for (random_boxes) |b| {
             const overlap = vol.checkVolumesOverlap(first_box, b);
@@ -72,9 +76,25 @@ fn benchmarkOverlapChecks() void {
     }
     const t_2 = time.microTimestamp();
 
+    for (0..num_trials / 2) |_| {
+        for (random_balls) |b| {
+            const overlap = vol.checkVolumesOverlap(first_box, b);
+            overlap_count_3 += if (overlap) 1 else 0;
+        }
+        for (random_boxes) |b| {
+            const overlap = vol.checkVolumesOverlap(first_ball, b);
+            overlap_count_3 += if (overlap) 1 else 0;
+        }
+    }
+    const t_3 = time.microTimestamp();
+
     std.debug.print(
-        "Overlapping intervals benchmark: found {}/{} overlaps. Method 1 (balls) took {} us; method 2 (boxes) took {} us.\n",
-        .{ overlap_count_1, overlap_count_2, t_1 - t_0, t_2 - t_1 },
+        "Overlapping intervals benchmark: found {}/{}/{} overlaps.\n",
+        .{ overlap_count_1, overlap_count_2, overlap_count_3 },
+    );
+    std.debug.print(
+        "Balls took {} us; boxes took {} us; ball-box took {} us.\n",
+        .{ t_1 - t_0, t_2 - t_1, t_3 - t_2 },
     );
 }
 
