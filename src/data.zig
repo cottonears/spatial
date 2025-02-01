@@ -2,6 +2,7 @@ const std = @import("std");
 const calc = @import("calc.zig");
 const vol = @import("volume.zig");
 const Vec2f = calc.Vec2f;
+const zero2f = calc.zero2f;
 
 /// A data structure that covers a square region (size * size) of 2D Euclidean space.
 pub fn SquareTree(
@@ -10,6 +11,7 @@ pub fn SquareTree(
     comptime DataIndex: type, // Type used to index data stored in leaf nodes.
     comptime VolType: anytype, // Type of bounding volume stored in the tree.
 ) type {
+    //const VolUnion = union { ball: vol.Ball2f, box: vol.Box2f }; TODO: add something like this and see if stored volumes can be mixed and matched
     return struct {
         allocator: std.mem.Allocator,
         origin: Vec2f,
@@ -24,13 +26,18 @@ pub fn SquareTree(
         comptime {
             if (!(base_num == 2 or base_num == 4 or base_num == 8 or base_num == 16)) @compileError("unsupported base_num");
             if (tree_depth < 2) @compileError("depth must be greater than 1");
-            if (base_num * tree_depth > 20) @compileError("base_num * depth exceeds limit (20)"); // things get seg-faulty above this limit =(
+            // things get seg-faulty when the below limit is exceeded (I think this might be an allocator problem?)
+            if (base_num * tree_depth > 20) @compileError("base_num * depth exceeds limit (20)");
         }
 
         pub const NodeIndex = std.math.IntFittingRange(0, num_leaves - 1);
         pub const BodyIndex = packed struct {
             leaf_index: NodeIndex,
             data_index: DataIndex,
+        };
+        pub const CollisionInfo = struct {
+            time: f32,
+            body_index: BodyIndex,
         };
         const Self = @This();
         pub const base: NodeIndex = @intCast(base_num);
@@ -197,7 +204,7 @@ pub fn SquareTree(
         }
 
         /// Returns indexes of all stored bodies that lie within the query volume.
-        pub fn findOverlaps(self: Self, overlap_buff: []BodyIndex, query_vol: VolType) []BodyIndex {
+        pub fn findOverlaps(self: Self, overlap_buff: []BodyIndex, query_vol: anytype) []BodyIndex {
             var buff_1: [num_leaves]NodeIndex = undefined;
             var buff_2: [num_leaves]NodeIndex = undefined;
             var search_slice: []NodeIndex = getChildIndexes(&buff_1, 0);
@@ -211,6 +218,7 @@ pub fn SquareTree(
                         next_offset += getChildIndexes(next_slice[next_offset..], i).len;
                     }
                 }
+                // NOTE: ptr is swapped but len is not!
                 const swap_slice = next_slice;
                 next_slice.ptr = search_slice.ptr;
                 search_slice = swap_slice[0..next_offset];
@@ -228,11 +236,11 @@ pub fn SquareTree(
                     }
                 }
             }
-            // TODO: find out if there is a cleaner way of doing the below?
-            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
+            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &.{};
         }
 
-        /// Returns indexes of stored bodies within the query volume with index > prior_index.
+        /// Returns indexes of stored bodies that overlap with the indexed volume.
+        /// Bodies whose with index less than the query index are not checked.
         pub fn findOverlapsFromIndex(self: Self, overlap_buff: []BodyIndex, index: BodyIndex) []BodyIndex {
             var buff_1: [num_leaves]NodeIndex = undefined;
             var buff_2: [num_leaves]NodeIndex = undefined;
@@ -254,7 +262,7 @@ pub fn SquareTree(
                 }
             }
             if (index.leaf_index == num_leaves - 1) {
-                return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
+                return if (overlap_len > 0) overlap_buff[0..overlap_len] else &.{};
             }
             // search through higher-level nodes from the next index
             const next_index = index.leaf_index + 1;
@@ -285,7 +293,54 @@ pub fn SquareTree(
                     }
                 }
             }
-            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &[0]BodyIndex{};
+            return if (overlap_len > 0) overlap_buff[0..overlap_len] else &.{};
+        }
+
+        pub fn findCollisions(
+            self: Self,
+            col_buff: []CollisionInfo,
+            query_vol: anytype,
+            velocity: Vec2f,
+            time_interval: f32,
+        ) []CollisionInfo {
+            var buff_1: [num_leaves]NodeIndex = undefined;
+            var buff_2: [num_leaves]NodeIndex = undefined;
+            var search_slice: []NodeIndex = getChildIndexes(&buff_1, 0);
+            var next_slice: []NodeIndex = buff_2[0..];
+            // search through higher-level nodes
+            for (0..depth - 1) |lvl| {
+                var next_offset: usize = 0;
+                for (search_slice) |i| {
+                    const node_vol = self.bounding_volumes[lvl][i];
+                    if (node_vol != null) {
+                        // TODO: maybe do a broad check if collision is possible above?
+                        // Could make use of calc.solveMinDistSquaredClamp.
+                        const t = vol.solveForCollision(query_vol, velocity, node_vol.?, zero2f);
+                        if (t < time_interval) {
+                            next_offset += getChildIndexes(next_slice[next_offset..], i).len;
+                        }
+                    }
+                }
+                // NOTE: ptr is swapped but len is not!
+                const swap_slice = next_slice;
+                next_slice.ptr = search_slice.ptr;
+                search_slice = swap_slice[0..next_offset];
+            }
+            // check leaf nodes for collisions
+            var col_len: usize = 0;
+            for (search_slice) |i| {
+                for (0.., self.leaf_data[i].items) |j, b| {
+                    const t = vol.solveForCollision(query_vol, velocity, b, zero2f);
+                    if (t < time_interval) {
+                        col_buff[col_len] = CollisionInfo{
+                            .body_index = BodyIndex{ .leaf_index = i, .data_index = @intCast(j) },
+                            .time = t,
+                        };
+                        col_len += 1;
+                    }
+                }
+            }
+            return if (col_len > 0) col_buff[0..col_len] else &.{};
         }
 
         /// Gets the index of the identified node's predecessor (0 or more levels higher).
@@ -323,9 +378,8 @@ pub fn SquareTree(
 // allowing us to ignore later potential collisions.
 
 const testing = std.testing;
-const volume = @import("volume.zig");
-const Ball2f = volume.Ball2f;
-const Box2f = volume.Box2f;
+const Ball2f = vol.Ball2f;
+const Box2f = vol.Box2f;
 const tolerance: f32 = 0.0001;
 
 test "square tree init" {
@@ -467,6 +521,30 @@ test "hex tree overlap box" {
     const overlap_3b = tree.findOverlapsFromIndex(&index_buff, index_a);
     try testing.expectEqual(3, overlap_3a.len);
     try testing.expectEqual(1, overlap_3b.len);
+}
+
+test "ball collision" {
+    const QuadTree = SquareTree(2, 4, u4, Ball2f);
+    var qt = try QuadTree.init(testing.allocator, 8, Vec2f{ 0, 0 }, 8.0);
+    defer qt.deinit();
+    const static_bodies = [_]Ball2f{
+        Ball2f{ .centre = Vec2f{ 0.2, 1.0 }, .radius = 0.1 },
+        Ball2f{ .centre = Vec2f{ 0.2, 2.0 }, .radius = 0.1 },
+        Ball2f{ .centre = Vec2f{ 0.2, 3.0 }, .radius = 0.1 },
+    };
+    for (static_bodies) |b| _ = try qt.addBody(b);
+    qt.updateBounds();
+
+    const moving_ball = Ball2f{ .centre = Vec2f{ 0.2, 0.0 }, .radius = 0.1 };
+    const velocity = Vec2f{ 0, 0.01 };
+    var col_buff: [8]QuadTree.CollisionInfo = undefined;
+    const col_infos = qt.findCollisions(&col_buff, moving_ball, velocity, 1000);
+    for (col_infos) |c| {
+        std.debug.print(
+            "Collision with {}.{} occurs at t = {d:.3}.\n",
+            .{ c.body_index.leaf_index, c.body_index.data_index, c.time },
+        );
+    }
 }
 
 test "square tree add remove" {

@@ -22,38 +22,6 @@ pub const Box2f = struct {
     }
 };
 
-// TODO: Investigate how performance is affected if volumes in overlap to be null.
-
-/// Returns true if the two balls overlap.
-/// Assumes neither of them is empty.
-pub fn checkOverlapBallBall(a: Ball2f, b: Ball2f) bool {
-    const vec_diff = a.centre - b.centre;
-    const r_sum = a.radius + b.radius;
-    return calc.squaredSum(vec_diff) < r_sum * r_sum;
-}
-
-/// Returns true if the two boxes overlap.
-/// Assumes neither of them is empty.
-pub fn checkOverlapBoxBox(a: Box2f, b: Box2f) bool {
-    const vec_diff = a.centre - b.centre;
-    const width_sum = a.half_width + b.half_width;
-    const height_sum = a.half_height + b.half_height;
-    return @abs(vec_diff[0]) < width_sum and @abs(vec_diff[1]) < height_sum;
-}
-
-/// Returns true if the ball and box overlap.
-/// Assumes neither of them is empty.
-pub fn checkOverlapBallBox(a: Ball2f, b: Box2f) bool {
-    const vec_diff = b.centre - a.centre;
-    const norm_d = calc.norm(vec_diff);
-    if (norm_d <= a.radius) return true;
-    // Find the point on the edge of the circle in the direction of b.
-    // Translate the point to get its position relative to b.
-    // Finally, check if this edge point is within b.
-    const edge_pt = calc.scaledVec(a.radius / norm_d, vec_diff) - vec_diff;
-    return @abs(edge_pt[0]) < b.half_width and @abs(edge_pt[1]) < b.half_height;
-}
-
 /// Returns true if the two volumes overlap.
 /// Assumes neither of them is empty
 pub fn checkVolumesOverlap(a: anytype, b: anytype) bool {
@@ -64,8 +32,18 @@ pub fn checkVolumesOverlap(a: anytype, b: anytype) bool {
     };
 }
 
+/// Returns a volume that encompasses both a and b.
+pub fn getEncompassingVolume(T: type, a: anytype, b: anytype) ?T {
+    return switch (T) {
+        // TODO: add support for mixed input types
+        Ball2f => getEncompassingBall(a, b),
+        Box2f => getEncompassingBox(a, b),
+        else => unreachable, // unsupported volume combination
+    };
+}
+
 /// Returns a ball that encompasses both input balls.
-pub fn getEncompassingBall(a: ?Ball2f, b: ?Ball2f) ?Ball2f {
+fn getEncompassingBall(a: ?Ball2f, b: ?Ball2f) ?Ball2f {
     if (a == null) return b;
     if (b == null) return a;
     const d = a.?.centre - b.?.centre;
@@ -80,7 +58,7 @@ pub fn getEncompassingBall(a: ?Ball2f, b: ?Ball2f) ?Ball2f {
 }
 
 /// Returns a box that encompasses both input boxes.
-pub fn getEncompassingBox(a: ?Box2f, b: ?Box2f) ?Box2f {
+fn getEncompassingBox(a: ?Box2f, b: ?Box2f) ?Box2f {
     if (a == null) return b;
     if (b == null) return a;
     const x_min = @min(a.?.centre[0] - a.?.half_width, b.?.centre[0] - b.?.half_width);
@@ -93,12 +71,68 @@ pub fn getEncompassingBox(a: ?Box2f, b: ?Box2f) ?Box2f {
     return .{ .centre = enc_centre, .half_width = half_width, .half_height = half_height };
 }
 
-pub fn getEncompassingVolume(T: type, a: anytype, b: anytype) ?T {
-    return switch (T) {
-        Ball2f => getEncompassingBall(a, b),
-        Box2f => getEncompassingBox(a, b),
-        else => unreachable,
+/// Returns true if the two balls overlap.
+/// Assumes neither of them is empty (radius > 0).
+fn checkOverlapBallBall(a: Ball2f, b: Ball2f) bool {
+    const vec_diff = a.centre - b.centre;
+    const r_sum = a.radius + b.radius;
+    return calc.squaredSum(vec_diff) < r_sum * r_sum;
+}
+
+/// Returns true if the two boxes overlap.
+/// Assumes neither of them is empty (width and height > 0).
+fn checkOverlapBoxBox(a: Box2f, b: Box2f) bool {
+    const vec_diff = a.centre - b.centre;
+    const width_sum = a.half_width + b.half_width;
+    const height_sum = a.half_height + b.half_height;
+    return @abs(vec_diff[0]) < width_sum and @abs(vec_diff[1]) < height_sum;
+}
+
+/// Returns true if the ball and box overlap.
+/// Assumes neither of them is empty.
+fn checkOverlapBallBox(a: Ball2f, b: Box2f) bool {
+    const vec_diff = b.centre - a.centre;
+    const norm_d = calc.norm(vec_diff);
+    if (norm_d <= a.radius) return true;
+    // Find the point on the edge of the circle in the direction of b.
+    // Translate the point to get its position relative to b.
+    // Finally, check if this edge point is within b.
+    const edge_pt = calc.scaledVec(a.radius / norm_d, vec_diff) - vec_diff;
+    return @abs(edge_pt[0]) < b.half_width and @abs(edge_pt[1]) < b.half_height;
+}
+
+/// Returns the time of the first collision for two volumes moving with constant velocity.
+/// Time will be a number in range [0, float-max] (float-max => no collision).
+pub fn solveForCollision(a: anytype, v_a: Vec2f, b: anytype, v_b: Vec2f) f32 {
+    return switch (@TypeOf(a)) {
+        // TODO: add support for boxes and mixed-volume checks
+        Ball2f => solveCollisionBallBall(a, v_a, b, v_b),
+        else => unreachable, // overlap check has not been implemented for this volume
     };
+}
+
+// TODO: optimise this! Might be better to check min-dist between a and b first?
+fn solveCollisionBallBall(a: Ball2f, v_a: Vec2f, b: Ball2f, v_b: Vec2f) f32 {
+    const u = a.centre - b.centre;
+    const u_dot_u = calc.dotProduct(u, u);
+    const rad_sum_squared = (a.radius + b.radius) * (a.radius + b.radius);
+    if (u_dot_u < rad_sum_squared) { // balls overlap at t = 0
+        return 0;
+    }
+    const v = v_a - v_b;
+    const coeff_0 = u_dot_u - rad_sum_squared;
+    const coeff_1 = 2 * calc.dotProduct(u, v);
+    const coeff_2 = calc.dotProduct(v, v);
+    const square_term = coeff_1 * coeff_1 - 4 * coeff_2 * coeff_0;
+    if (square_term < 0 or coeff_2 == 0) { // no real solutions
+        return std.math.floatMax(f32);
+    }
+    // otherwise return the t closest
+    const t_1 = (-coeff_1 + @sqrt(square_term)) / (2 * coeff_2);
+    const t_2 = (-coeff_1 - @sqrt(square_term)) / (2 * coeff_2);
+    if (t_1 < 0 and t_2 < 0) return std.math.floatMax(f32);
+    if (t_1 >= 0 and t_2 >= 0) return @min(t_1, t_2);
+    return if (t_1 < 0) t_2 else t_1;
 }
 
 const testing = std.testing;
@@ -141,4 +175,11 @@ test "test encompassing balls" {
     const b = Ball2f{ .centre = Vec2f{ 0.123, 0.355 }, .radius = 0.031 };
     const c = getEncompassingVolume(Ball2f, a, b);
     try testing.expect(c.?.radius >= @max(a.radius, b.radius));
+}
+
+test "test ball collisions" {
+    const a = Ball2f{ .centre = Vec2f{ 0.0, 0.0 }, .radius = 1 };
+    const b = Ball2f{ .centre = Vec2f{ 0.0, 5.0 }, .radius = 1 };
+    const t = solveCollisionBallBall(a, Vec2f{ 0, 0 }, b, Vec2f{ 0, -0.1 });
+    std.debug.print("solved for t = {d:.3}\n", .{t});
 }
