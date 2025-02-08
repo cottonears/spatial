@@ -105,7 +105,7 @@ fn benchmarkSquareTree(
     comptime VolumeType: type,
     allocator: std.mem.Allocator,
 ) !void {
-    const TreeType = data.SquareTree(base_num, depth, DataIndex, VolumeType);
+    const TreeType = data.SquareGridStatic(base_num, depth, DataIndex, VolumeType);
     var type_info_buff: [512]u8 = undefined;
     const type_info = try TreeType.getTypeInfo(&type_info_buff);
     std.debug.print("{s}", .{type_info});
@@ -114,19 +114,19 @@ fn benchmarkSquareTree(
     defer qt.deinit();
 
     const random_bodies = getRandomBodies(VolumeType);
-    var body_indexes: [benchmark_len]TreeType.BodyIndex = undefined;
-    var overlap_buff: [2 * benchmark_len]TreeType.BodyIndex = undefined;
+    var body_indexes: [benchmark_len]TreeType.VolumeIndex = undefined;
+    var overlap_buff: [2 * benchmark_len]TreeType.VolumeIndex = undefined;
     var overlap_count_1: u32 = 0;
     var overlap_count_2: u32 = 0;
 
     const t_0 = time.microTimestamp();
     for (0..num_trials) |_| {
-        qt.clearAllBodies();
-        for (random_bodies, 0..) |ball, i| body_indexes[i] = try qt.addBody(ball);
+        qt.clearStoredVolumes();
+        for (random_bodies, 0..) |ball, i| body_indexes[i] = try qt.addVolume(ball);
     }
     const t_1 = time.microTimestamp();
     for (0..num_trials) |_| {
-        qt.updateBounds();
+        qt.updateBoundVolumes();
     }
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
@@ -160,7 +160,7 @@ fn benchmarkSquareTree(
 }
 
 fn benchmarkIndexing(allocator: std.mem.Allocator) !void {
-    const Tree16x2 = data.SquareTree(4, 2, u8, Ball2f);
+    const Tree16x2 = data.SquareGridStatic(4, 2, u8, Ball2f);
     var ht = try Tree16x2.init(allocator, 8, Vec2f{ 0, 0 }, 1.0);
     defer ht.deinit();
     var ln_sum_1: usize = 0;
@@ -229,9 +229,9 @@ var dashed_styles: [palette_size]svg.ShapeStyle = undefined;
 var solid_styles: [palette_size]svg.ShapeStyle = undefined;
 var test_canvas: svg.Canvas = undefined;
 
-const BallGrid = data.SquareTree(4, 2, u16, Ball2f);
+const BallGrid = data.SquareGridStatic(4, 2, u16, Ball2f);
 var ball_grid: BallGrid = undefined;
-const BoxGrid = data.SquareTree(4, 2, u16, Box2f);
+const BoxGrid = data.SquareGridStatic(4, 2, u16, Box2f);
 var box_grid: BoxGrid = undefined;
 
 fn initTesting(delete_out_dir: bool) !void {
@@ -290,7 +290,7 @@ test "draw encompassing balls" {
         const c = vol.getEncompassingVolume(Ball2f, a, b);
         try test_canvas.addCircle(testing.allocator, a.centre, a.radius, solid_styles[1]);
         try test_canvas.addCircle(testing.allocator, b.centre, b.radius, solid_styles[3]);
-        try test_canvas.addCircle(testing.allocator, c.?.centre, c.?.radius, dashed_styles[7]);
+        try test_canvas.addCircle(testing.allocator, c.centre, c.radius, dashed_styles[7]);
         // write an image to file
         var fname_buff: [128]u8 = undefined;
         const fpath = try fmt.bufPrint(
@@ -319,7 +319,7 @@ test "draw encompassing boxes" {
         const c = vol.getEncompassingVolume(Box2f, a, b);
         const corners_a = a.getCorners();
         const corners_b = b.getCorners();
-        const corners_c = c.?.getCorners();
+        const corners_c = c.getCorners();
         try test_canvas.addRectangle(testing.allocator, corners_a[0], corners_a[1], solid_styles[1]);
         try test_canvas.addRectangle(testing.allocator, corners_b[0], corners_b[1], solid_styles[3]);
         try test_canvas.addRectangle(testing.allocator, corners_c[0], corners_c[1], dashed_styles[7]);
@@ -346,7 +346,7 @@ test "draw ball grid" {
         const font_size: u8 = 6 + 4 * (BallGrid.depth - lvl);
         const lvl_end_index = BallGrid.nodes_in_level[lvl];
         for (0..lvl_end_index) |i| {
-            const index: BallGrid.NodeIndex = @intCast(i);
+            const index: BallGrid.NodeNumber = @intCast(i);
             const node_origin = try ball_grid.getNodeOrigin(lvl, index);
             const node_centre = try ball_grid.getNodeCentre(lvl, index);
             const node_corner = try ball_grid.getNodeCorner(lvl, index);
@@ -357,13 +357,13 @@ test "draw ball grid" {
     }
 
     //  add some data to the test grid and record indexes of all bodies that overlap with others
-    var body_indexes: [test_len]BallGrid.BodyIndex = undefined;
-    for (0.., random_balls[0..test_len]) |i, b| body_indexes[i] = try ball_grid.addBody(b);
-    ball_grid.updateBounds();
-    var overlap_set = std.AutoHashMap(BallGrid.BodyIndex, void).init(testing.allocator);
+    var body_indexes: [test_len]BallGrid.VolumeIndex = undefined;
+    for (0.., random_balls[0..test_len]) |i, b| body_indexes[i] = try ball_grid.addVolume(b);
+    ball_grid.updateBoundVolumes();
+    var overlap_set = std.AutoHashMap(BallGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
     for (body_indexes) |i| {
-        var overlap_buff: [test_len]BallGrid.BodyIndex = undefined;
+        var overlap_buff: [test_len]BallGrid.VolumeIndex = undefined;
         const overlaps_found = ball_grid.findOverlapsFromIndex(&overlap_buff, i);
         if (overlaps_found.len == 0) continue;
         try overlap_set.put(i, {});
@@ -372,7 +372,7 @@ test "draw ball grid" {
 
     // draw circles on the canvas; write SVG file.
     for (body_indexes) |i| {
-        const body = ball_grid.getBody(i) orelse unreachable;
+        const body = ball_grid.getVolume(i) orelse unreachable;
         const style = if (overlap_set.contains(i)) solid_styles[6] else solid_styles[8];
         try test_canvas.addCircle(testing.allocator, body.centre, body.radius, style);
     }
@@ -397,7 +397,7 @@ test "draw box grid" {
         const font_size: u8 = 6 + 4 * (BoxGrid.depth - lvl);
         const lvl_end_index = BoxGrid.nodes_in_level[lvl];
         for (0..lvl_end_index) |i| {
-            const index: BoxGrid.NodeIndex = @intCast(i);
+            const index: BoxGrid.NodeNumber = @intCast(i);
             const node_origin = try box_grid.getNodeOrigin(lvl, index);
             const node_centre = try box_grid.getNodeCentre(lvl, index);
             const node_corner = try box_grid.getNodeCorner(lvl, index);
@@ -408,13 +408,13 @@ test "draw box grid" {
     }
 
     //  add some data to the test grid and record indexes of all bodies that overlap with others
-    var body_indexes: [test_len]BoxGrid.BodyIndex = undefined;
-    for (0.., random_boxes[0..test_len]) |i, b| body_indexes[i] = try box_grid.addBody(b);
-    box_grid.updateBounds();
-    var overlap_set = std.AutoHashMap(BoxGrid.BodyIndex, void).init(testing.allocator);
+    var body_indexes: [test_len]BoxGrid.VolumeIndex = undefined;
+    for (0.., random_boxes[0..test_len]) |i, b| body_indexes[i] = try box_grid.addVolume(b);
+    box_grid.updateBoundVolumes();
+    var overlap_set = std.AutoHashMap(BoxGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
     for (body_indexes) |i| {
-        var overlap_buff: [test_len]BoxGrid.BodyIndex = undefined;
+        var overlap_buff: [test_len]BoxGrid.VolumeIndex = undefined;
         const overlaps_found = box_grid.findOverlapsFromIndex(&overlap_buff, i);
         if (overlaps_found.len == 0) continue;
         try overlap_set.put(i, {});
@@ -423,7 +423,7 @@ test "draw box grid" {
 
     // draw rectangles on the canvas; write SVG file.
     for (body_indexes) |i| {
-        const box = box_grid.getBody(i) orelse unreachable;
+        const box = box_grid.getVolume(i) orelse unreachable;
         const box_corners = box.getCorners();
         const style = if (overlap_set.contains(i)) solid_styles[6] else solid_styles[8];
         try test_canvas.addRectangle(testing.allocator, box_corners[0], box_corners[1], style);
@@ -465,15 +465,15 @@ test "integration test 1" {
     try testing.expect(max_dist_found < max_dist_expected + tolerance);
 
     // store some random points in the grid
-    var body_indexes: [test_len]BallGrid.BodyIndex = undefined;
-    for (0..test_len) |i| body_indexes[i] = try ball_grid.addBody(random_balls[i]);
-    ball_grid.updateBounds();
+    var body_indexes: [test_len]BallGrid.VolumeIndex = undefined;
+    for (0..test_len) |i| body_indexes[i] = try ball_grid.addVolume(random_balls[i]);
+    ball_grid.updateBoundVolumes();
 
     // find the overlapping bodies and record their indexes
-    var overlap_set_1 = std.AutoHashMap(BallGrid.BodyIndex, void).init(testing.allocator);
+    var overlap_set_1 = std.AutoHashMap(BallGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set_1.deinit();
     for (body_indexes) |i| {
-        var buff: [test_len]BallGrid.BodyIndex = undefined;
+        var buff: [test_len]BallGrid.VolumeIndex = undefined;
         const overlaps_found = ball_grid.findOverlapsFromIndex(&buff, i);
         if (overlaps_found.len > 0) {
             try overlap_set_1.put(i, {});
@@ -482,14 +482,14 @@ test "integration test 1" {
     }
 
     // find overlaps using the alternative function
-    var overlap_set_2 = std.AutoHashMap(BallGrid.BodyIndex, void).init(testing.allocator);
+    var overlap_set_2 = std.AutoHashMap(BallGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set_2.deinit();
     for (random_balls[0..test_len], body_indexes) |b, i| {
-        var buff: [test_len]BallGrid.BodyIndex = undefined;
+        var buff: [test_len]BallGrid.VolumeIndex = undefined;
         const overlaps_found = ball_grid.findOverlaps(&buff, b);
         if (overlaps_found.len > 0) {
             for (overlaps_found) |j| {
-                if (i.leaf_index == j.leaf_index and i.data_index == j.data_index) continue;
+                if (i.leaf_num == j.leaf_num and i.data_index == j.data_index) continue;
                 try overlap_set_2.put(j, {});
             }
         }
