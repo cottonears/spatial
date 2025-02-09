@@ -126,7 +126,7 @@ fn benchmarkSquareTree(
     }
     const t_1 = time.microTimestamp();
     for (0..num_trials) |_| {
-        qt.updateBoundVolumes();
+        qt.updateBounds();
     }
     const t_2 = time.microTimestamp();
     for (0..num_trials) |_| {
@@ -359,7 +359,7 @@ test "draw ball grid" {
     //  add some data to the test grid and record indexes of all bodies that overlap with others
     var body_indexes: [test_len]BallGrid.VolumeIndex = undefined;
     for (0.., random_balls[0..test_len]) |i, b| body_indexes[i] = try ball_grid.addVolume(b);
-    ball_grid.updateBoundVolumes();
+    ball_grid.updateBounds();
     var overlap_set = std.AutoHashMap(BallGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
     for (body_indexes) |i| {
@@ -410,7 +410,7 @@ test "draw box grid" {
     //  add some data to the test grid and record indexes of all bodies that overlap with others
     var body_indexes: [test_len]BoxGrid.VolumeIndex = undefined;
     for (0.., random_boxes[0..test_len]) |i, b| body_indexes[i] = try box_grid.addVolume(b);
-    box_grid.updateBoundVolumes();
+    box_grid.updateBounds();
     var overlap_set = std.AutoHashMap(BoxGrid.VolumeIndex, void).init(testing.allocator);
     defer overlap_set.deinit();
     for (body_indexes) |i| {
@@ -467,7 +467,7 @@ test "integration test 1" {
     // store some random points in the grid
     var body_indexes: [test_len]BallGrid.VolumeIndex = undefined;
     for (0..test_len) |i| body_indexes[i] = try ball_grid.addVolume(random_balls[i]);
-    ball_grid.updateBoundVolumes();
+    ball_grid.updateBounds();
 
     // find the overlapping bodies and record their indexes
     var overlap_set_1 = std.AutoHashMap(BallGrid.VolumeIndex, void).init(testing.allocator);

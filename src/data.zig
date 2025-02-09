@@ -43,7 +43,7 @@ pub fn SquareGridStatic(
         };
         pub const CollisionInfo = struct {
             time: f32,
-            body_index: VolumeIndex,
+            vol_index: VolumeIndex,
         };
         const Self = @This();
         pub const base: NodeNumber = @intCast(base_num);
@@ -184,8 +184,8 @@ pub fn SquareGridStatic(
             self.num_bodies = 0;
         }
 
-        /// Updates all bounding volumes.
-        pub fn updateBoundVolumes(self: *Self) void {
+        /// Updates all bounding volumes to encompass all points that fall within them.
+        pub fn updateBounds(self: *Self) void {
             for (reverse_levels) |lvl| {
                 if (lvl == depth - 1) { // leaf nodes
                     for (0..num_leaves) |i| {
@@ -341,7 +341,7 @@ pub fn SquareGridStatic(
                     const t = vol.solveForCollision(query_vol, velocity, b, zero2f);
                     if (t < time_interval) {
                         col_buff[col_len] = CollisionInfo{
-                            .body_index = VolumeIndex{ .leaf_num = i, .data_index = @intCast(j) },
+                            .vol_index = VolumeIndex{ .leaf_num = i, .data_index = @intCast(j) },
                             .time = t,
                         };
                         col_len += 1;
@@ -478,7 +478,7 @@ test "hex tree overlap ball" {
     const index_a = try tree.addVolume(a);
     const index_b = try tree.addVolume(b);
     const index_c = try tree.addVolume(c);
-    tree.updateBoundVolumes();
+    tree.updateBounds();
 
     var index_buff: [8]HexTree2.VolumeIndex = undefined;
     const query_region_1 = Ball2f{ .centre = Vec2f{ 0.9, 0.5 }, .radius = 0.1 };
@@ -510,7 +510,7 @@ test "hex tree overlap box" {
     const index_a = try tree.addVolume(a);
     const index_b = try tree.addVolume(b);
     const index_c = try tree.addVolume(c);
-    tree.updateBoundVolumes();
+    tree.updateBounds();
 
     var index_buff: [8]HexTree2.VolumeIndex = undefined;
     const query_region_1 = Box2f{ .centre = Vec2f{ 0.9, 0.5 }, .half_width = 0.1, .half_height = 0.1 };
